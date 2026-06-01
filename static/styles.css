@@ -1,0 +1,978 @@
+/* Cancer Support — patient-facing styles
+   Warm, calm, mobile-first. Sage primary + cream surface, large readable type. */
+
+:root {
+  /* Surfaces */
+  --bg:           #FBF8F4;
+  --bg-elev:      #FFFFFF;
+  --bg-sunken:    #F2EDE6;
+  --bg-tint:      #FAF6F0;
+
+  /* Borders */
+  --border:        #E8DFD2;
+  --border-strong: #D5C7B3;
+
+  /* Text */
+  --text:        #2A241D;
+  --text-muted:  #6B5F52;
+  --text-faint:  #9A8C7B;
+
+  /* Primary (sage) */
+  --primary:        #4A7C6F;
+  --primary-strong: #355C52;
+  --primary-soft:   rgba(74, 124, 111, 0.10);
+
+  /* Accent (warm amber, used for citations) */
+  --accent:        #C97B3F;
+  --accent-strong: #A85F2A;
+  --accent-soft:   rgba(201, 123, 63, 0.12);
+
+  /* Status */
+  --warn:    #B45309;
+  --warn-bg: rgba(180, 83, 9, 0.08);
+  --danger:  #A73B28;
+  --success: #4A7C6F;
+  --skipped: #B8AC9C;
+
+  /* Shape */
+  --radius-sm: 8px;
+  --radius-md: 14px;
+  --radius-lg: 20px;
+  --shadow-sm: 0 1px 2px rgba(80, 60, 40, 0.04);
+  --shadow-md: 0 4px 16px rgba(80, 60, 40, 0.07);
+
+  /* Type */
+  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-serif: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --max-content: 720px;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  font-size: 16px;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.65;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* --- Disclaimer banner ----------------------------------------------------- */
+
+.disclaimer-banner {
+  background: var(--warn-bg);
+  color: var(--warn);
+  border-bottom: 1px solid rgba(180, 83, 9, 0.2);
+  padding: 12px 16px;
+  text-align: center;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  position: sticky;
+  top: 0;
+  z-index: 100;
+}
+
+.disclaimer-banner strong {
+  font-weight: 600;
+}
+
+/* --- Topbar --------------------------------------------------------------- */
+
+.topbar {
+  background: var(--bg-elev);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-inner {
+  max-width: var(--max-content);
+  margin: 0 auto;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.brand {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 1.25rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.topbar nav {
+  display: flex;
+  gap: 18px;
+}
+
+.topbar nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.topbar nav a:hover,
+.topbar nav a:focus-visible {
+  color: var(--primary);
+}
+
+/* --- Main / views --------------------------------------------------------- */
+
+main {
+  max-width: var(--max-content);
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+.view {
+  margin-bottom: 40px;
+}
+
+.hero-h1 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 2.25rem;
+  line-height: 1.2;
+  color: var(--text);
+  margin-bottom: 12px;
+  letter-spacing: -0.01em;
+}
+
+.hero-sub {
+  font-size: 1.05rem;
+  color: var(--text-muted);
+  margin-bottom: 32px;
+  max-width: 60ch;
+}
+
+/* --- Form ----------------------------------------------------------------- */
+
+.patient-form {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.field-label {
+  font-weight: 600;
+  color: var(--text);
+  font-size: 1rem;
+}
+
+.field-help {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.field-optional {
+  color: var(--text-faint);
+  font-weight: 400;
+  font-size: 0.85em;
+  margin-left: 4px;
+}
+
+.field textarea,
+.field input[type="text"] {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  color: var(--text);
+  background: var(--bg-tint);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px 14px;
+  line-height: 1.55;
+  width: 100%;
+  resize: vertical;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.field textarea {
+  min-height: 140px;
+}
+
+.field textarea:focus,
+.field input:focus {
+  outline: none;
+  border-color: var(--primary);
+  background: var(--bg-elev);
+  box-shadow: 0 0 0 3px var(--primary-soft);
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 0.9rem;
+  min-height: 1.2em;
+}
+
+.field textarea[aria-invalid="true"],
+.field input[aria-invalid="true"] {
+  border-color: var(--danger);
+}
+
+.checkbox-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+  padding: 12px;
+  background: var(--bg-tint);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border);
+  color: var(--text);
+  font-size: 0.95rem;
+  line-height: 1.5;
+}
+
+.checkbox-field input[type="checkbox"] {
+  margin-top: 3px;
+  width: 18px;
+  height: 18px;
+  accent-color: var(--primary);
+  flex-shrink: 0;
+}
+
+/* --- Buttons -------------------------------------------------------------- */
+
+.form-actions {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.btn {
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  font-weight: 600;
+  border-radius: var(--radius-md);
+  padding: 12px 22px;
+  border: 1.5px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.05s;
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+}
+
+.btn:active {
+  transform: translateY(1px);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: white;
+}
+
+.btn-primary:hover,
+.btn-primary:focus-visible {
+  background: var(--primary-strong);
+  outline: none;
+}
+
+.btn-primary:disabled {
+  background: var(--text-faint);
+  cursor: not-allowed;
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text-muted);
+  border-color: var(--border-strong);
+}
+
+.btn-ghost:hover,
+.btn-ghost:focus-visible {
+  border-color: var(--primary);
+  color: var(--primary);
+  outline: none;
+}
+
+/* --- How it works --------------------------------------------------------- */
+
+.how-it-works {
+  margin-top: 40px;
+  padding: 24px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-lg);
+}
+
+.how-it-works h2 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.3rem;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+.how-steps {
+  list-style: none;
+  counter-reset: how;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.how-steps li {
+  counter-increment: how;
+  padding-left: 36px;
+  position: relative;
+  font-size: 0.98rem;
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+.how-steps li::before {
+  content: counter(how);
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--primary);
+  color: white;
+  font-weight: 600;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.how-steps strong {
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* --- Working view --------------------------------------------------------- */
+
+.working-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.working-header h2 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.6rem;
+  color: var(--text);
+}
+
+.working-sub {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: 24px;
+}
+
+.agent-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.agent-card {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 16px 18px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  transition: opacity 0.2s, border-color 0.2s;
+}
+
+.agent-card.is-waiting {
+  opacity: 0.55;
+}
+
+.agent-card.is-skipped {
+  opacity: 0.6;
+  background: var(--bg-sunken);
+}
+
+.agent-card.is-done {
+  border-color: var(--primary-soft);
+}
+
+.agent-card.is-error {
+  border-color: rgba(167, 59, 40, 0.3);
+}
+
+.agent-avatar {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: var(--primary);
+  color: white;
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.05rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.agent-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.agent-name {
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 2px;
+}
+
+.agent-status {
+  font-size: 0.92rem;
+  color: var(--text-muted);
+}
+
+.agent-sources {
+  font-size: 0.85rem;
+  color: var(--text-faint);
+  margin-top: 4px;
+}
+
+.agent-icon {
+  width: 24px;
+  text-align: center;
+  font-size: 1.1rem;
+  flex-shrink: 0;
+  color: var(--text-faint);
+}
+
+.agent-card.is-done .agent-icon {
+  color: var(--primary);
+}
+
+.agent-card.is-error .agent-icon {
+  color: var(--danger);
+}
+
+.phase-line {
+  margin-top: 20px;
+  padding: 14px 18px;
+  background: var(--primary-soft);
+  border-radius: var(--radius-md);
+  color: var(--primary-strong);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.phase-line:empty {
+  display: none;
+}
+
+/* --- Result view ---------------------------------------------------------- */
+
+.result-sub {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  margin-bottom: 20px;
+}
+
+#result-heading {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.8rem;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.appt-cta {
+  background: var(--accent-soft);
+  border: 1.5px solid var(--accent);
+  border-radius: var(--radius-md);
+  padding: 18px 20px;
+  margin-bottom: 20px;
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.appt-cta-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 220px;
+}
+
+.appt-cta-text strong {
+  color: var(--accent-strong);
+  font-size: 1.05rem;
+}
+
+.appt-cta-text span {
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.appt-cta-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.result-disclaimer {
+  background: var(--warn-bg);
+  border-left: 4px solid var(--warn);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 14px 18px;
+  color: var(--text);
+  margin-bottom: 24px;
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+
+.result-disclaimer-bottom {
+  background: var(--warn-bg);
+  border-left: 4px solid var(--warn);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  padding: 14px 18px;
+  color: var(--text);
+  margin: 32px 0 24px;
+  font-size: 0.98rem;
+  line-height: 1.55;
+}
+
+.result-markdown {
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 28px;
+  box-shadow: var(--shadow-sm);
+}
+
+.result-markdown h1 {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 1.7rem;
+  margin: 0 0 18px;
+  color: var(--text);
+}
+
+.result-markdown h2 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.3rem;
+  margin: 28px 0 12px;
+  color: var(--text);
+  border-top: 1px solid var(--border);
+  padding-top: 24px;
+}
+
+.result-markdown h2:first-of-type {
+  border-top: none;
+  padding-top: 0;
+  margin-top: 0;
+}
+
+.result-markdown h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin: 20px 0 10px;
+  color: var(--text);
+}
+
+.result-markdown p {
+  margin-bottom: 14px;
+  line-height: 1.7;
+  max-width: 65ch;
+}
+
+.result-markdown ul,
+.result-markdown ol {
+  margin: 0 0 16px 22px;
+}
+
+.result-markdown li {
+  margin-bottom: 6px;
+  line-height: 1.65;
+}
+
+.result-markdown strong {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.result-markdown a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.result-markdown a:hover {
+  color: var(--primary-strong);
+}
+
+.result-markdown blockquote {
+  border-left: 4px solid var(--accent);
+  background: var(--accent-soft);
+  padding: 12px 16px;
+  margin: 16px 0;
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+  color: var(--text);
+}
+
+.cite {
+  display: inline-block;
+  padding: 1px 6px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  border-radius: 4px;
+  font-size: 0.85em;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.cite:hover {
+  background: var(--accent);
+  color: white;
+}
+
+/* --- References ----------------------------------------------------------- */
+
+.references-section {
+  margin-top: 32px;
+  padding: 24px;
+  background: var(--bg-sunken);
+  border-radius: var(--radius-lg);
+}
+
+.references-section h3 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.2rem;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+
+.refs-hint {
+  color: var(--text-muted);
+  font-size: 0.9rem;
+  margin-bottom: 16px;
+}
+
+.references-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.references-list li {
+  background: var(--bg-elev);
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  font-size: 0.92rem;
+  line-height: 1.5;
+}
+
+.ref-label {
+  display: inline-block;
+  font-weight: 700;
+  color: var(--accent-strong);
+  margin-right: 6px;
+}
+
+.ref-title {
+  color: var(--text);
+  font-weight: 500;
+}
+
+.ref-meta {
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  margin-top: 4px;
+}
+
+.ref-meta a {
+  color: var(--primary);
+}
+
+/* Source-kind cues on each reference card */
+.references-list li.ref-kind-patient_story {
+  border-left: 3px solid #B05E6E;   /* warm rose, matches Stories agent */
+  background: #FBF6F4;
+}
+.references-list li.ref-kind-resource_directory {
+  border-left: 3px solid var(--accent);
+}
+.references-list li.ref-kind-patient_source {
+  border-left: 3px solid var(--primary-soft);
+}
+
+.ref-badge {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 7px;
+  border-radius: 999px;
+  margin-right: 8px;
+  vertical-align: 2px;
+}
+.ref-badge-story {
+  background: #B05E6E;
+  color: #FFF6F4;
+}
+.ref-badge-resource {
+  background: var(--accent);
+  color: var(--bg-elev);
+}
+.ref-badge-source {
+  background: var(--primary);
+  color: #FFFFFF;
+}
+
+/* Plain-English summary block inside each reference card */
+.ref-lay {
+  background: var(--bg-tint);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+  border-left: 3px solid var(--primary);
+  color: var(--text);
+  font-size: 0.92rem;
+  line-height: 1.55;
+}
+.ref-lay-label {
+  font-weight: 700;
+  color: var(--primary-strong);
+  margin-right: 4px;
+}
+
+/* Hover tooltip for inline [N] citations */
+.cite-tooltip {
+  position: absolute;
+  z-index: 9999;
+  max-width: 380px;
+  min-width: 240px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: 0 12px 32px rgba(80, 60, 40, 0.18);
+  padding: 12px 14px;
+  font-size: 0.9rem;
+  line-height: 1.55;
+  color: var(--text);
+  pointer-events: auto;
+}
+.cite-tooltip[hidden] { display: none; }
+.cite-tooltip-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: baseline;
+  margin-bottom: 4px;
+}
+.cite-tooltip-label {
+  font-weight: 700;
+  color: var(--accent-strong);
+}
+.cite-tooltip-title {
+  font-weight: 500;
+  color: var(--text);
+}
+.cite-tooltip-meta {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  margin-bottom: 8px;
+}
+.cite-tooltip-meta a {
+  color: var(--primary);
+}
+.cite-tooltip-laylabel {
+  font-weight: 700;
+  color: var(--primary-strong);
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+}
+.cite-tooltip-lay {
+  background: var(--bg-tint);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  border-left: 3px solid var(--primary);
+  color: var(--text);
+}
+.cite-tooltip-lay-missing {
+  color: var(--text-muted);
+  font-style: italic;
+  border-left-color: var(--border);
+}
+.cite-tooltip-lay-loading {
+  color: var(--text-muted);
+  font-style: italic;
+  border-left-color: var(--accent);
+}
+
+/* Tooltip should NOT appear when printing — print stylesheet hides it. */
+@media print {
+  .cite-tooltip { display: none !important; }
+}
+
+/* --- Footer --------------------------------------------------------------- */
+
+.footer {
+  max-width: var(--max-content);
+  margin: 0 auto;
+  padding: 24px 20px 40px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  border-top: 1px solid var(--border);
+}
+
+.footer a {
+  color: var(--text-muted);
+}
+
+/* --- Responsive ----------------------------------------------------------- */
+
+@media (max-width: 600px) {
+  .hero-h1 {
+    font-size: 1.75rem;
+  }
+
+  .patient-form,
+  .result-markdown {
+    padding: 20px;
+  }
+
+  .appt-cta {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .appt-cta-actions {
+    width: 100%;
+  }
+
+  .appt-cta-actions .btn {
+    flex: 1;
+  }
+
+  .form-actions {
+    flex-direction: column;
+  }
+
+  .form-actions .btn {
+    width: 100%;
+  }
+}
+
+/* --- Print stylesheet ----------------------------------------------------- */
+
+@media print {
+  .topbar,
+  .disclaimer-banner,
+  .footer,
+  .appt-cta,
+  #cancel-btn,
+  #restart-btn,
+  .how-it-works,
+  #view-form,
+  #view-working {
+    display: none !important;
+  }
+
+  body {
+    background: white;
+    color: black;
+    font-size: 11pt;
+    line-height: 1.5;
+  }
+
+  main {
+    max-width: 100%;
+    padding: 0;
+  }
+
+  .result-disclaimer,
+  .result-disclaimer-bottom {
+    border: 2px solid #B45309;
+    background: white;
+    padding: 8px 12px;
+    margin: 12px 0;
+  }
+
+  .result-markdown {
+    background: white;
+    border: none;
+    box-shadow: none;
+    padding: 0;
+  }
+
+  .result-markdown h1,
+  .result-markdown h2,
+  .result-markdown h3 {
+    color: black;
+    page-break-after: avoid;
+  }
+
+  .references-section {
+    background: white;
+    border: 1px solid #999;
+    page-break-before: auto;
+  }
+
+  .cite {
+    color: black;
+    background: transparent;
+    border: 1px solid #999;
+    padding: 0 4px;
+  }
+
+  a {
+    color: black;
+    text-decoration: underline;
+  }
+
+  a[href]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #555;
+  }
+}

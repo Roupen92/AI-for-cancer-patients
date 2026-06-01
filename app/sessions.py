@@ -1,0 +1,73 @@
+"""In-memory session registry for streaming board events."""
+import asyncio
+import logging
+import time
+import uuid
+from dataclasses import dataclass, field
+
+log = logging.getLogger(__name__)
+
+SESSION_TTL_SECONDS = 30 * 60
+CLEANUP_INTERVAL_SECONDS = 60
+
+
+@dataclass
+class Session:
+    sid: str
+    queue: asyncio.Queue = field(default_factory=lambda: asyncio.Queue(maxsize=512))
+    task: asyncio.Task | None = None
+    started_at: float = field(default_factory=time.time)
+    finished_at: float | None = None
+    final_result: dict | None = None
+    error: str | None = None
+    is_streaming: bool = False
+    # Lay summaries generated on-demand by GET /api/board/{sid}/lay_summary/{label}.
+    # Cached so the same citation hovered twice doesn't pay the LLM cost twice.
+    lay_summaries: dict[str, str] = field(default_factory=dict)
+
+
+SESSIONS: dict[str, Session] = {}
+
+
+def new_session() -> Session:
+    sid = f"tb_{uuid.uuid4().hex[:12]}"
+    s = Session(sid=sid)
+    SESSIONS[sid] = s
+    return s
+
+
+def get(sid: str) -> Session | None:
+    return SESSIONS.get(sid)
+
+
+def emit_factory(session: Session):
+    """Return a closure suitable for board.run_board's `emit` parameter."""
+    def _emit(event_type: str, payload: dict) -> None:
+        try:
+            session.queue.put_nowait({"type": event_type, "payload": payload})
+        except asyncio.QueueFull:
+            # Drop silently if the client isn't draining fast enough.
+            pass
+    return _emit
+
+
+async def cleanup_loop() -> None:
+    while True:
+        try:
+            now = time.time()
+            stale = [
+                sid
+                for sid, s in SESSIONS.items()
+                if (s.finished_at and now - s.finished_at > SESSION_TTL_SECONDS)
+                or (now - s.started_at > 2 * SESSION_TTL_SECONDS)
+            ]
+            for sid in stale:
+                s = SESSIONS.pop(sid, None)
+                if s and s.task and not s.task.done():
+                    s.task.cancel()
+        except asyncio.CancelledError:
+            # Propagate cancellation so the lifespan shutdown completes cleanly.
+            raise
+        except Exception:
+            log.exception("cleanup_loop iteration failed; continuing")
+        await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)

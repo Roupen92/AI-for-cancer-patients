@@ -1,0 +1,14 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.DS_Store
+.playwright-mcp/
+.claude/settings.local.json
+issues to fix.md
+image/issuestofix/
+
+# Local debugging screenshots / dev artifacts (not part of the app)
+*.png

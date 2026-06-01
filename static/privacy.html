@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Privacy — Cancer Support</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet" />
+</head>
+<body>
+  <div class="disclaimer-banner" role="region" aria-label="Important notice">
+    <strong>This is not medical advice.</strong> Always talk to your oncology team before making any decisions.
+  </div>
+
+  <header class="topbar" role="banner">
+    <div class="topbar-inner">
+      <a href="/" class="brand">Cancer Support</a>
+      <nav aria-label="Primary">
+        <a href="/">Home</a>
+        <a href="/about">About</a>
+        <a href="/privacy">Privacy</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <h1 class="hero-h1">Privacy</h1>
+
+    <article class="result-markdown" style="margin-top:20px">
+      <h2>What you share with us</h2>
+      <p>
+        When you use this tool, you share three things:
+      </p>
+      <ul>
+        <li>A description of your cancer or situation.</li>
+        <li>Where you live (optional, but helpful for finding local resources).</li>
+        <li>The language you want the response in.</li>
+      </ul>
+
+      <h2>What we do with it</h2>
+      <p>
+        While your session is running, your description is sent to:
+      </p>
+      <ul>
+        <li>The AI service (Google Gemini or OpenAI, depending on configuration) so the helpers can think about it.</li>
+        <li>Trusted medical search APIs (PubMed, Brave Search restricted to authoritative patient-facing oncology sites) so the helpers can find sources.</li>
+      </ul>
+      <p>
+        Your session lives in the server's memory only while it is running. After about 30 minutes
+        of inactivity, it is automatically deleted. We do not save your session to a database.
+        We do not log the content of what you shared.
+      </p>
+
+      <h2>What you should still be careful about</h2>
+      <ul>
+        <li>If you copy or print your summary and share it, it may contain details about your health. Share carefully.</li>
+        <li>If you save the page on a shared computer, the page text may stay in browser history.</li>
+        <li>This tool uses third-party AI services. Those services have their own privacy policies — please review them if that matters to you.</li>
+      </ul>
+
+      <h2>What we don't do</h2>
+      <ul>
+        <li>We do not have access to your medical records.</li>
+        <li>We do not store an account or login.</li>
+        <li>We do not share your information with advertisers.</li>
+      </ul>
+
+      <h2>Questions</h2>
+      <p>
+        This is an open-source project. If you have questions about how it works,
+        check the source code or contact the maintainer.
+      </p>
+    </article>
+  </main>
+
+  <footer class="footer" role="contentinfo">
+    <p>Built to help cancer patients ask better questions. Not a substitute for clinical care.</p>
+    <p><a href="/">Home</a> · <a href="/about">About</a></p>
+  </footer>
+</body>
+</html>
