@@ -13,7 +13,7 @@ from typing import Any
 
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 
-from app.config import MODEL_NAME
+from app.config import MODEL_NAME, PROVIDER
 
 # Sentinel exception so callers (specialist.py / board.py) can render a clean
 # user-facing message instead of dumping the raw OpenAI JSON.
@@ -28,16 +28,13 @@ _client: OpenAI | None = None
 
 
 def get_client() -> OpenAI:
-    """Return a singleton client. Defaults to Gemini; set MEDBOARD_PROVIDER=openai to use OpenAI."""
+    """Return a singleton client for the provider resolved in config (explicit
+    *_PROVIDER, else inferred from whichever API key is present)."""
     global _client
     if _client is not None:
         return _client
 
-    provider = (
-        os.getenv("CANCERPATIENT_PROVIDER")
-        or os.getenv("MEDBOARD_PROVIDER")
-        or "gemini"
-    ).lower()
+    provider = PROVIDER
     if provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:

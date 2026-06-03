@@ -11,10 +11,40 @@ from app import prompts
 
 # Accept either prefix so an .env copied from the Tumor Board (MEDBOARD_*) works
 # unchanged. CANCERPATIENT_* takes precedence when both are set.
+
+
+def _resolve_provider() -> str:
+    """Pick the LLM provider.
+
+    An explicit CANCERPATIENT_PROVIDER / MEDBOARD_PROVIDER always wins. When none
+    is set, infer it from whichever API key is actually present so a deployment
+    that only supplies one key (e.g. OPENAI_API_KEY on Railway) just works without
+    a separate provider flag. Gemini stays the documented default when its key is
+    present (free tier), with OpenAI as the fallback.
+    """
+    explicit = (
+        os.getenv("CANCERPATIENT_PROVIDER")
+        or os.getenv("MEDBOARD_PROVIDER")
+        or ""
+    ).strip().lower()
+    if explicit:
+        return explicit
+    if os.getenv("GEMINI_API_KEY"):
+        return "gemini"
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    return "gemini"  # nothing set: keep the documented default; get_client() raises a clear error
+
+
+PROVIDER = _resolve_provider()
+
+# The default model has to match the resolved provider — a Gemini model name sent
+# to OpenAI (or vice versa) fails. An explicit *_MODEL override always wins.
+_DEFAULT_MODEL = "gpt-5.1" if PROVIDER == "openai" else "gemini-2.5-flash"
 MODEL_NAME = (
     os.getenv("CANCERPATIENT_MODEL")
     or os.getenv("MEDBOARD_MODEL")
-    or "gemini-2.5-flash"
+    or _DEFAULT_MODEL
 )
 
 # Single round of parallel specialists; no judge, no consensus loop.
