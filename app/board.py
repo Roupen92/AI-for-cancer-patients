@@ -1,5 +1,12 @@
-"""Patient-care board orchestrator: single round of 6 parallel specialists,
-synthesizer, then translator pass. No judge, no multi-round adversarial loop."""
+"""Care-team orchestrator: one round of parallel specialists, synthesizer,
+institution-gloss pass, plain-language pass, then translation. No judge, no
+multi-round adversarial loop.
+
+The roster is supplied by the caller (app/router.py picks it per patient
+message). `run_board` keeps the original signature — full roster, free-text case
+— for the eval harness and the one-shot consult endpoint; `run_consult` is the
+parameterized entry point the chat path uses.
+"""
 import asyncio
 import logging
 import re
@@ -8,9 +15,11 @@ from typing import Callable
 
 from app import llm, language, prompts
 from app.config import (
+    FULL_CONSULT_IDS,
     PARALLEL_SPECIALISTS,
+    SECTION_HEADINGS,
     SPECIALIST_CONFIGS,
-    SPECIALIST_IDS,
+    order_specialists,
     public_specialist_info,
     researcher_ids,
 )
@@ -20,21 +29,31 @@ from app.specialist import SpecialistResult, run_specialist
 log = logging.getLogger(__name__)
 
 
-# Regex pre-filter for SLP relevance. If this hits, SLP runs; if it misses, we
-# still let the LLM make the call via its SKIP marker (belt-and-suspenders).
+# Regex pre-filter for SLP relevance, used only on the un-routed path (the
+# one-shot consult, where nothing has triaged the case yet). On the chat path the
+# router decides, and the LLM SKIP marker inside specialist.py is the backstop
+# either way.
 # Prefix-style: trailing word boundary intentionally omitted so "laryng" matches
 # "laryngeal", "dysphag" matches "dysphagia", "glioblastom" matches "glioblastoma".
 _SLP_KEYWORDS = re.compile(
     r"\b("
+    # Head, neck, and airway
     r"head\s+and\s+neck|"
     r"orophar|hypophar|nasophar|larynx|laryng|"
     r"esophag|oesophag|"
     r"glossectom|tongue\s+cancer|oral\s+(cavity|cancer)|"
     r"thyroid\s+cancer|"
+    r"vocal\s+cord|voice\s+box|tracheostom|intubat|"
+    # Brain and nerves
     r"brain\s+tumor|brain\s+tumour|glioma|glioblastom|meningiom|"
-    r"vocal\s+cord|voice\s+box|tracheostom|"
-    r"swallow|dysphag|"
-    r"speech\s+(problem|issue|change|loss)"
+    r"strok|tia\b|aphasi|dysarthri|"
+    r"parkinson|multiple\s+sclerosis|\bals\b|motor\s+neuron|huntington|dementia|alzheim|"
+    r"head\s+injury|traumatic\s+brain|"
+    # Symptoms
+    r"swallow|dysphag|choking|aspirat|"
+    r"hoarse|voice\s+(change|loss|problem)|"
+    r"speech\s+(problem|issue|change|loss)|slurred|"
+    r"word[- ]finding|trouble\s+(speaking|talking|finding\s+words)"
     r")",
     re.IGNORECASE,
 )
@@ -48,10 +67,36 @@ def _summary_or_skip(res: SpecialistResult) -> str:
     if res.status == "skipped":
         return "(skipped — not applicable to this case)"
     if res.status == "no_evidence":
-        return "(could not find trustworthy sources — please ask your oncology team)"
+        return "(could not find trustworthy sources — please ask your care team)"
     if res.status == "error":
         return f"(error: {res.error})"
     return res.recommendation_summary
+
+
+def _sections_block(active_ids: list[str], history: dict[str, SpecialistResult]) -> str:
+    """The `SECTIONS TO WRITE` contract handed to the synthesizer.
+
+    Built from the specialists that actually produced usable drafts, in
+    SECTION_ORDER. This is what makes the summary shape follow the roster instead
+    of a hardcoded six-section cancer outline: an agent that wasn't picked, or
+    that skipped, simply has no line here and therefore no heading in the output.
+    """
+    lines = []
+    for sid in order_specialists(active_ids):
+        res = history.get(sid)
+        if not res or res.status == "skipped":
+            continue
+        heading = SECTION_HEADINGS.get(sid, SPECIALIST_CONFIGS[sid]["display_name"])
+        lines.append(f"  - `## {heading}`  ← from the {SPECIALIST_CONFIGS[sid]['display_name']} draft ({sid})")
+    if not lines:
+        return (
+            "SECTIONS TO WRITE: (none — no specialist produced a draft; say so honestly "
+            "in one short paragraph and tell the patient to ask their care team)"
+        )
+    return (
+        "SECTIONS TO WRITE (exactly these, in this order, using these headings verbatim; "
+        "do not add sections, do not rename headings):\n" + "\n".join(lines)
+    )
 
 
 def _synthesize_final(
@@ -61,16 +106,21 @@ def _synthesize_final(
     location_parsed: dict,
     preferences: str,
     ledger: EvidenceLedger,
+    active_ids: list[str] | None = None,
+    *,
+    conversation_context: str = "",
 ) -> str:
     """Single LLM call → English markdown summary, section-per-specialist.
 
-    The user_content is structured as labeled blocks (PATIENT FACTS, SPECIALIST
-    DRAFTS, CITED EVIDENCE) so the synthesizer can ctrl-F for tokens before
-    writing — closes the loophole where it would paraphrase patient prose and
-    invent plausible-but-wrong facts (e.g., 'Boston' instead of Toronto).
+    The user_content is structured as labeled blocks (PATIENT FACTS, SECTIONS TO
+    WRITE, SPECIALIST DRAFTS, CITED EVIDENCE) so the synthesizer can ctrl-F for
+    tokens before writing — closes the loophole where it would paraphrase patient
+    prose and invent plausible-but-wrong facts (e.g., 'Boston' instead of Toronto).
     """
+    ids = order_specialists(active_ids if active_ids is not None else researcher_ids())
+
     drafts = []
-    for sid in researcher_ids():
+    for sid in ids:
         res = history.get(sid)
         if not res:
             continue
@@ -130,8 +180,20 @@ def _synthesize_final(
         f"  Preferences (diet/movement/limits): {preferences.strip() or '(none provided)'}"
     )
 
+    context_block = ""
+    if conversation_context.strip():
+        context_block = (
+            "\n\nEARLIER IN THIS CONVERSATION (context only — these are facts the patient "
+            "already gave you and answers they already received; do not repeat the answers, "
+            "and do not treat anything here as a new clinical claim):\n"
+            + conversation_context.strip()
+        )
+
     user_content = (
         "\n".join(facts_lines)
+        + context_block
+        + "\n\n"
+        + _sections_block(ids, history)
         + "\n\nSPECIALIST DRAFTS (only specialists listed here should appear as sections in your output):\n\n"
         + ("\n\n".join(drafts) if drafts else "(no specialists produced drafts)")
         + "\n\nCITED EVIDENCE (use these when reproducing claims; preserve [N] labels):\n\n"
@@ -149,10 +211,9 @@ def _synthesize_final(
         return (
             "## We couldn't finish your summary\n\n"
             "The AI service ran out of credits while putting your summary together. "
-            "Please try again in a few minutes. The specialist notes above are still "
-            "available below.\n\n"
+            "Please try again in a few minutes.\n\n"
             "**This is general information from public sources. It is not medical "
-            "advice. Always talk to your oncology team.**"
+            "advice. Always talk to your care team.**"
         )
     except Exception as e:
         log.exception("Synthesizer failed.")
@@ -160,6 +221,129 @@ def _synthesize_final(
         if len(msg) > 200:
             msg = msg[:197] + "…"
         return f"## Something went wrong assembling your summary\n\n`{msg}`"
+
+
+# --------------------------------------------------------------------------- #
+# Post-synthesis safety / readability passes
+# --------------------------------------------------------------------------- #
+
+_CITE_RE = re.compile(r"\[(\d{1,3})\]")
+# Numbers that carry clinical meaning. Citation labels are stripped before this
+# runs, so what's left is doses, durations, targets, and counts.
+_NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _citation_labels(md: str) -> set[str]:
+    return set(_CITE_RE.findall(md or ""))
+
+
+def _clinical_numbers(md: str) -> set[str]:
+    stripped = _CITE_RE.sub(" ", md or "")
+    return set(_NUMBER_RE.findall(stripped))
+
+
+def _gloss_institutions(english_md: str) -> str:
+    """Post-synthesis safety pass: guarantee every organization named in the
+    summary is identified in plain English for the patient (e.g., "NICE" ->
+    "NICE, the body that writes treatment guidance for the UK's health service").
+
+    Inserts ONLY institution names/descriptions; everything else (claims, [N]
+    labels, numbers, URLs, structure) is preserved. Falls back to the input on
+    any error, and refuses an implausibly short result, so it can never gut or
+    break the summary.
+    """
+    if not (english_md or "").strip():
+        return english_md
+    messages = [
+        {"role": "system", "content": prompts.INSTITUTION_GLOSSARY},
+        {"role": "user", "content": english_md},
+    ]
+    try:
+        # Run THIS call at high reasoning effort regardless of the pipeline default:
+        # it is a single cheap pass whose entire job is exhaustive coverage, and at
+        # low effort it intermittently misses one institution (e.g. an agency named
+        # in full mid-sentence). High effort makes the guarantee reliable.
+        resp = llm.chat(messages, tools=None, reasoning_effort="high")
+        out = (resp.choices[0].message.content or "").strip()
+        # The pass only ADDS institution descriptions, so the output should never
+        # be shorter than the input. A much-shorter result means a refusal or a
+        # truncation — keep the original rather than ship a gutted summary.
+        if len(out) < int(0.9 * len(english_md.strip())):
+            log.warning(
+                "Institution gloss pass returned a suspiciously short doc "
+                "(%d vs %d chars); keeping original.", len(out), len(english_md.strip())
+            )
+            return english_md
+        return out
+    except llm.QuotaExceeded as e:
+        log.warning("Institution gloss pass hit LLM quota: %s", e)
+        return english_md
+    except Exception:
+        log.exception("Institution gloss pass failed; returning un-glossed summary.")
+        return english_md
+
+
+def _plain_language(md: str) -> str:
+    """Final readability pass: shorten sentences, gloss jargon, anchor numbers.
+
+    This is the pass most likely to do harm by being helpful — the failure mode is
+    "simplifying" `1.2 to 1.5 g of protein per kg per day` into `enough protein`,
+    which destroys the entire value of the answer. So the result is verified
+    mechanically before it's accepted:
+      * every `[N]` citation in the input must still be present, and
+      * the clinical numbers must survive (a small tolerance covers legitimate
+        rewrites like "3 times per week" → "three times a week").
+    If either check fails, the original is returned unchanged.
+    """
+    src = (md or "").strip()
+    if not src:
+        return md
+
+    messages = [
+        {"role": "system", "content": prompts.PLAIN_LANGUAGE},
+        {"role": "user", "content": src},
+    ]
+    try:
+        resp = llm.chat(messages, tools=None)
+        out = (resp.choices[0].message.content or "").strip()
+    except llm.QuotaExceeded as e:
+        log.warning("Plain-language pass hit LLM quota: %s", e)
+        return md
+    except Exception:
+        log.exception("Plain-language pass failed; returning the un-simplified draft.")
+        return md
+
+    if not out:
+        return md
+
+    if len(out) < int(0.6 * len(src)):
+        log.warning(
+            "Plain-language pass returned a suspiciously short doc (%d vs %d chars); "
+            "keeping original.", len(out), len(src)
+        )
+        return md
+
+    lost_cites = _citation_labels(src) - _citation_labels(out)
+    if lost_cites:
+        log.warning(
+            "Plain-language pass dropped citations %s; keeping original.",
+            sorted(lost_cites),
+        )
+        return md
+
+    src_numbers = _clinical_numbers(src)
+    if src_numbers:
+        lost_numbers = src_numbers - _clinical_numbers(out)
+        # Spelled-out small numbers ("three times a week") are a legitimate
+        # simplification, so tolerate a few losses — but not wholesale flattening.
+        if len(lost_numbers) > max(2, int(0.2 * len(src_numbers))):
+            log.warning(
+                "Plain-language pass dropped clinical numbers %s (of %d); keeping original.",
+                sorted(lost_numbers)[:10], len(src_numbers),
+            )
+            return md
+
+    return out
 
 
 def _is_english(target_language: str) -> bool:
@@ -197,7 +381,8 @@ async def _lay_summarize_references(ledger: EvidenceLedger, emit) -> None:
     summary and attach it via ledger.set_lay_summary. Runs in parallel with a
     small concurrency cap so it doesn't blast the LLM provider.
 
-    Wall clock for ~20 entries at ~0.7s each, concurrency=6 ≈ 3-5 seconds.
+    Not called on the normal path — the frontend fetches these on demand when the
+    patient actually hovers a citation. Kept for offline/batch use.
     """
     entries = [e for e in ledger.all() if e.cited_by]
     if not entries:
@@ -258,12 +443,21 @@ def _build_timing_summary(timing: dict, total_s: float) -> dict:
          for n, v in timing["tools"].items()),
         key=lambda t: t["seconds"], reverse=True,
     )
+    post = (
+        timing["synth"]
+        + timing.get("gloss", 0.0)
+        + timing.get("plain", 0.0)
+        + timing["translate"]
+    )
     return {
         "total_s": round(total_s, 1),
-        "llm_s": round(llm_total + timing["synth"] + timing["translate"], 1),
+        "llm_s": round(llm_total + post, 1),
         "tool_s": round(tool_total, 1),
         "synth_s": round(timing["synth"], 1),
+        "gloss_s": round(timing.get("gloss", 0.0), 1),
+        "plain_s": round(timing.get("plain", 0.0), 1),
         "translate_s": round(timing["translate"], 1),
+        "router_s": round(timing.get("router", 0.0), 1),
         "llm_calls": llm_calls,
         "tool_calls": tool_calls,
         "specialists": specs,
@@ -271,69 +465,40 @@ def _build_timing_summary(timing: dict, total_s: float) -> dict:
     }
 
 
-async def run_board(
-    case: str,
-    location: str,
-    target_language: str,
-    emit: Callable[[str, dict], None],
-    *,
-    preferences: str = "",
-) -> dict:
-    """Main entry. Streams events via emit(type, payload). Returns the final dict."""
-    ledger = EvidenceLedger()
-    history: dict[str, SpecialistResult] = {}
+def _new_timing() -> dict:
+    return {
+        "specialists": {},
+        "tools": {},
+        "synth": 0.0,
+        "gloss": 0.0,
+        "plain": 0.0,
+        "translate": 0.0,
+        "router": 0.0,
+    }
 
-    board_t0 = time.perf_counter()
-    timing = {"specialists": {}, "tools": {}, "synth": 0.0, "translate": 0.0}
+
+async def run_specialists(
+    active_ids: list[str],
+    case_with_context: str,
+    ledger: EvidenceLedger,
+    emit: Callable[[str, dict], None],
+    timing: dict,
+    *,
+    focus: dict[str, str] | None = None,
+    extra_directives: str = "",
+) -> dict[str, SpecialistResult]:
+    """Run one parallel round of the given specialists. Returns id → result.
+
+    Emits `specialist_event` for progress and `specialist_round_complete` per
+    agent. Crashes are converted to error results so one bad agent can't take the
+    turn down.
+    """
+    focus = focus or {}
 
     def _spec_rec(sid):
         return timing["specialists"].setdefault(
             sid, {"wall": 0.0, "llm": 0.0, "tool": 0.0, "llm_n": 0, "tool_n": 0}
         )
-
-    target_language = language.normalize_language(target_language)
-
-    # Determine which research agents run this turn. SLP pre-filter is a cheap
-    # regex; the LLM SKIP gate inside specialist.py is the second line of defense.
-    candidates = researcher_ids()
-    active_ids = [sid for sid in candidates if sid != "slp" or _slp_relevant(case)]
-
-    # Emit the roster IMMEDIATELY so the patient sees the helper cards on screen
-    # right away — before the (potentially slow) location-extraction LLM call.
-    roster = [s for s in public_specialist_info() if s["id"] in active_ids or s["id"] == "translator"]
-    emit(
-        "board_started",
-        {
-            "specialists": roster,
-            "target_language": target_language,
-        },
-    )
-
-    # One-shot location extraction. The result is bundled into the case so each
-    # specialist sees it; the navigator's prompt knows to use it.
-    loc = await asyncio.to_thread(language.extract_country_region, location)
-    location_block = ""
-    if location and location.strip():
-        location_block = f"\n\nPatient location (free text): {location.strip()}"
-        if loc.get("country"):
-            parts = [loc["country"]]
-            if loc.get("region"):
-                parts.insert(0, loc["region"])
-            if loc.get("city"):
-                parts.insert(0, loc["city"])
-            location_block += f"\nExtracted location: {', '.join(parts)} (confidence: {loc.get('confidence', 'low')})."
-    case_with_loc = case.rstrip() + location_block
-
-    # Patient-shared preferences (diet, exercise, limitations) — appended so every
-    # specialist sees them and must honor them per the SPECIFICITY GATE in COMMON_PREFIX.
-    if preferences and preferences.strip():
-        case_with_loc += (
-            "\n\nPATIENT'S STATED PREFERENCES (must be honored when picking specific "
-            "foods, exercises, or recommendations):\n" + preferences.strip()
-        )
-
-    if loc.get("country"):
-        emit("location_extracted", loc)
 
     sem = asyncio.Semaphore(PARALLEL_SPECIALISTS)
 
@@ -354,26 +519,44 @@ async def run_board(
                     tr["calls"] += 1
                 emit("specialist_event", {"specialist": sid, "type": t, "payload": p})
 
+            # Per-agent brief from the router, plus any pipeline-level directive
+            # (e.g. chat-mode brevity). Handed in as the context prefix so it sits
+            # above the case text the agent reads.
+            prefix_parts = []
+            if focus.get(spec_id):
+                prefix_parts.append(
+                    "YOUR ASSIGNMENT FOR THIS PATIENT (from the team's triage):\n"
+                    + focus[spec_id].strip()
+                )
+            if extra_directives.strip():
+                prefix_parts.append(extra_directives.strip())
+            context_prefix = "\n\n".join(prefix_parts)
+
             _t0 = time.perf_counter()
-            res = await run_specialist(spec_id, case_with_loc, "", ledger, _emit)
+            res = await run_specialist(spec_id, case_with_context, context_prefix, ledger, _emit)
             _spec_rec(spec_id)["wall"] += time.perf_counter() - _t0
             return spec_id, res
 
-    # Single parallel research round.
-    tasks = [run_one(sid) for sid in active_ids]
-    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
-    results = []
+    raw_results = await asyncio.gather(
+        *(run_one(sid) for sid in active_ids), return_exceptions=True
+    )
+
+    results: list[tuple[str, SpecialistResult]] = []
     for sid, res in zip(active_ids, raw_results):
         if isinstance(res, BaseException):
             log.exception("Specialist %s crashed uncaught", sid, exc_info=res)
-            clean = SpecialistResult(
-                specialist_id=sid, status="error",
-                error=f"{type(res).__name__}: {str(res)[:160]}",
-            )
-            results.append((sid, clean))
+            results.append((
+                sid,
+                SpecialistResult(
+                    specialist_id=sid,
+                    status="error",
+                    error=f"{type(res).__name__}: {str(res)[:160]}",
+                ),
+            ))
         else:
             results.append(res)
 
+    history: dict[str, SpecialistResult] = {}
     for sid, res in results:
         history[sid] = res
         emit(
@@ -392,44 +575,135 @@ async def run_board(
                 "error": res.error,
             },
         )
+    return history
 
-    # Mark any non-running candidates (e.g., SLP pre-filtered out) as skipped
-    # in the history so the UI can render their cards as skipped.
-    for sid in candidates:
-        if sid not in [s for s, _ in results]:
-            history[sid] = SpecialistResult(
-                specialist_id=sid,
-                status="skipped",
-                draft_markdown="",
-                recommendation_summary="(not applicable to this case)",
+
+async def run_consult(
+    case: str,
+    location: str,
+    target_language: str,
+    emit: Callable[[str, dict], None],
+    *,
+    specialist_ids: list[str],
+    focus: dict[str, str] | None = None,
+    preferences: str = "",
+    ledger: EvidenceLedger | None = None,
+    conversation_context: str = "",
+    extra_directives: str = "",
+    location_parsed: dict | None = None,
+    emit_roster: bool = True,
+    skipped_ids: list[str] | None = None,
+) -> dict:
+    """Full consult over an explicit roster: parallel research → synthesis →
+    institution gloss → plain-language → translation.
+
+    `ledger` can be passed in so a multi-turn conversation keeps one stable set of
+    `[N]` labels across turns instead of renumbering every message.
+    """
+    ledger = ledger if ledger is not None else EvidenceLedger()
+    board_t0 = time.perf_counter()
+    timing = _new_timing()
+
+    target_language = language.normalize_language(target_language)
+    active_ids = order_specialists(specialist_ids)
+
+    if emit_roster:
+        roster = public_specialist_info(active_ids + (["translator"] if not _is_english(target_language) else []))
+        emit("board_started", {"specialists": roster, "target_language": target_language})
+
+    # Location: reuse the parse if the caller already has one (conversations do),
+    # otherwise pay for one extraction call.
+    if location_parsed is not None:
+        loc = location_parsed
+    else:
+        loc = await asyncio.to_thread(language.extract_country_region, location)
+
+    location_block = ""
+    if location and location.strip():
+        location_block = f"\n\nPatient location (free text): {location.strip()}"
+        if loc.get("country"):
+            parts = [loc["country"]]
+            if loc.get("region"):
+                parts.insert(0, loc["region"])
+            if loc.get("city"):
+                parts.insert(0, loc["city"])
+            location_block += (
+                f"\nExtracted location: {', '.join(parts)} "
+                f"(confidence: {loc.get('confidence', 'low')})."
             )
-            emit(
-                "specialist_round_complete",
-                {
-                    "specialist": sid,
-                    "status": "skipped",
-                    "draft_markdown": "",
-                    "recommendation_summary": "(not applicable to this case)",
-                    "evidence_labels": [],
-                    "evidence": [],
-                    "error": "",
-                },
-            )
+    case_with_loc = case.rstrip() + location_block
+
+    # Patient-shared preferences (diet, exercise, limitations) — appended so every
+    # specialist sees them and must honor them per the SPECIFICITY GATE in COMMON_PREFIX.
+    if preferences and preferences.strip():
+        case_with_loc += (
+            "\n\nPATIENT'S STATED PREFERENCES (must be honored when picking specific "
+            "foods, exercises, or recommendations):\n" + preferences.strip()
+        )
+
+    if conversation_context.strip():
+        case_with_loc += (
+            "\n\nEARLIER IN THIS CONVERSATION (context — do not repeat what the patient "
+            "has already been told; build on it):\n" + conversation_context.strip()
+        )
+
+    if loc.get("country"):
+        emit("location_extracted", loc)
+
+    history = await run_specialists(
+        active_ids, case_with_loc, ledger, emit, timing,
+        focus=focus, extra_directives=extra_directives,
+    )
+
+    # Mark any explicitly-skipped candidates (e.g. SLP pre-filtered out on the
+    # un-routed path) so the UI can render their cards as skipped.
+    for sid in (skipped_ids or []):
+        if sid in history or sid not in SPECIALIST_CONFIGS:
+            continue
+        history[sid] = SpecialistResult(
+            specialist_id=sid,
+            status="skipped",
+            draft_markdown="",
+            recommendation_summary="(not applicable to this case)",
+        )
+        emit(
+            "specialist_round_complete",
+            {
+                "specialist": sid,
+                "status": "skipped",
+                "draft_markdown": "",
+                "recommendation_summary": "(not applicable to this case)",
+                "evidence_labels": [],
+                "evidence": [],
+                "error": "",
+            },
+        )
 
     # Synthesize the English summary.
     emit("phase", {"phase": "synthesizing"})
     _s0 = time.perf_counter()
     english_md = await asyncio.to_thread(
-        _synthesize_final, history, case, location, loc, preferences, ledger
+        _synthesize_final, history, case, location, loc, preferences, ledger, active_ids,
+        conversation_context=conversation_context,
     )
     timing["synth"] += time.perf_counter() - _s0
-    emit("synthesis_complete", {"english_markdown": english_md})
 
-    # NOTE: Plain-English (lay) summaries for citations are NOT generated
-    # eagerly here. They're generated on-demand by GET /api/lay_summary/...
-    # when the patient actually hovers a citation. That keeps the final
-    # result fast (no extra 30s wait) and only pays the LLM cost for refs
-    # the patient actually engages with.
+    # Institution-naming safety pass: deterministically guarantee every org named
+    # in the summary is identified in plain English. Falls back to the un-glossed
+    # summary on any error (see _gloss_institutions).
+    emit("phase", {"phase": "naming_sources"})
+    _g0 = time.perf_counter()
+    english_md = await asyncio.to_thread(_gloss_institutions, english_md)
+    timing["gloss"] += time.perf_counter() - _g0
+
+    # Plain-language pass — the "turn this into simple terms" agent. Verified
+    # mechanically against citation and number loss before being accepted.
+    emit("phase", {"phase": "simplifying"})
+    _p0 = time.perf_counter()
+    english_md = await asyncio.to_thread(_plain_language, english_md)
+    timing["plain"] += time.perf_counter() - _p0
+
+    emit("synthesis_complete", {"english_markdown": english_md})
 
     # Translate (no-op if target is English).
     emit("phase", {"phase": "translating", "target_language": target_language})
@@ -447,7 +721,42 @@ async def run_board(
         "references": references,
         "timing": summary,
         "location_inferred": loc,
+        "specialists": active_ids,
     }
     emit("timing_summary", summary)
     emit("final", final)
     return final
+
+
+async def run_board(
+    case: str,
+    location: str,
+    target_language: str,
+    emit: Callable[[str, dict], None],
+    *,
+    preferences: str = "",
+    specialist_ids: list[str] | None = None,
+) -> dict:
+    """One-shot consult over the standing full-consult roster — the original entry point.
+
+    Used by the /api/board endpoint and the eval harness. `specialist_ids` lets a
+    caller narrow the roster; by default config.FULL_CONSULT_IDS runs, with the SLP
+    gated by the keyword pre-filter.
+    """
+    if specialist_ids is None:
+        candidates = [sid for sid in FULL_CONSULT_IDS if sid in SPECIALIST_CONFIGS]
+        active_ids = [sid for sid in candidates if sid != "slp" or _slp_relevant(case)]
+        skipped = [sid for sid in candidates if sid not in active_ids]
+    else:
+        active_ids = order_specialists(specialist_ids)
+        skipped = []
+
+    return await run_consult(
+        case,
+        location,
+        target_language,
+        emit,
+        specialist_ids=active_ids,
+        preferences=preferences,
+        skipped_ids=skipped,
+    )

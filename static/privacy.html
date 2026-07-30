@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Privacy — Cancer Support</title>
+  <title>Privacy — Patient Guide</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234A7C6F'/%3E%3Cpath d='M9 16h4l2-5 3 10 2-5h3' stroke='white' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,16 +12,17 @@
 </head>
 <body>
   <div class="disclaimer-banner" role="region" aria-label="Important notice">
-    <strong>This is not medical advice.</strong> Always talk to your oncology team before making any decisions.
+    <strong>This is not medical advice.</strong> Always talk to your care team before making any decisions.
   </div>
 
   <header class="topbar" role="banner">
     <div class="topbar-inner">
-      <a href="/" class="brand">Cancer Support</a>
+      <a href="/" class="brand">Patient Guide</a>
       <nav aria-label="Primary">
-        <a href="/">Home</a>
+        <a href="/">Chat</a>
+        <a href="/consult">Full consult</a>
         <a href="/about">About</a>
-        <a href="/privacy">Privacy</a>
+        <a href="/privacy" aria-current="page">Privacy</a>
         <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a>
       </nav>
     </div>
@@ -32,40 +34,60 @@
     <article class="result-markdown" style="margin-top:20px">
       <h2>What you share with us</h2>
       <p>
-        When you use this tool, you share three things:
+        When you use this tool, you may share:
       </p>
       <ul>
-        <li>A description of your cancer or situation.</li>
-        <li>Where you live (optional, but helpful for finding local resources).</li>
-        <li>The language you want the response in.</li>
+        <li>Your questions, and whatever you say about your health situation.</li>
+        <li>The "About me" details, if you fill them in — your condition, where you live, your age, and any diet or movement preferences.</li>
+        <li>The language you want answers in.</li>
       </ul>
+      <p>
+        None of it is required. The chat works without the profile; the answers are just more
+        specific when it's filled in.
+      </p>
+
+      <h2>Where your "About me" details live</h2>
+      <p>
+        The profile is stored in <strong>your own browser</strong> (localStorage), not on our
+        servers. It is sent along with each question so the helpers can use it, and it is
+        forgotten server-side when your conversation expires. "Clear everything" in the panel
+        deletes it from your browser.
+      </p>
 
       <h2>What we do with it</h2>
       <p>
-        While your session is running, your description is sent to:
+        While a question is being researched, what you wrote is sent to:
       </p>
       <ul>
-        <li>The AI service (Google Gemini or OpenAI, depending on configuration) so the helpers can think about it.</li>
-        <li>Trusted medical search APIs (PubMed, Brave Search restricted to authoritative patient-facing oncology sites) so the helpers can find sources.</li>
+        <li>The AI service (OpenRouter, Google Gemini, or OpenAI, depending on how the app is configured) so the helpers can reason about it.</li>
+        <li>Search and retrieval APIs so the helpers can find sources: PubMed, Europe PMC, Semantic Scholar, ClinicalTrials.gov, and a web-search API restricted to an allowlist of trusted patient-facing health sites.</li>
       </ul>
       <p>
-        Your session lives in the server's memory only while it is running. After about 30 minutes
-        of inactivity, it is automatically deleted. We do not save your session to a database.
-        We do not log the content of what you shared.
+        Searches are sent as extracted <em>concepts</em> — "heart failure sodium limit", not your
+        personal narrative.
+      </p>
+
+      <h2>How long it is kept</h2>
+      <p>
+        Your conversation lives in the server's memory only. It is automatically deleted after
+        about two hours of inactivity (a one-shot consult, after about 30 minutes). We do not
+        write it to a database, and we do not log the content of what you shared.
       </p>
 
       <h2>What you should still be careful about</h2>
       <ul>
-        <li>If you copy or print your summary and share it, it may contain details about your health. Share carefully.</li>
-        <li>If you save the page on a shared computer, the page text may stay in browser history.</li>
-        <li>This tool uses third-party AI services. Those services have their own privacy policies — please review them if that matters to you.</li>
+        <li>Please don't include your full name, address, phone number, insurance or ID numbers, or your medical record number. Nothing here needs them.</li>
+        <li>If you copy or print an answer and share it, it may contain details about your health. Share carefully.</li>
+        <li>On a shared or family computer, the page text may remain in browser history, and the "About me" profile stays in that browser until you clear it.</li>
+        <li>This tool uses third-party AI and search services. Those services have their own privacy policies — please review them if that matters to you.</li>
       </ul>
 
       <h2>What we don't do</h2>
       <ul>
         <li>We do not have access to your medical records.</li>
-        <li>We do not store an account or login.</li>
-        <li>We do not share your information with advertisers.</li>
+        <li>We do not create an account or ask you to log in.</li>
+        <li>We do not share your information with advertisers, and we do not sell it.</li>
+        <li>We do not use what you write to train AI models ourselves.</li>
       </ul>
 
       <h2>Questions</h2>
@@ -79,8 +101,8 @@
   </main>
 
   <footer class="footer" role="contentinfo">
-    <p>Built to help cancer patients ask better questions. Not a substitute for clinical care.</p>
-    <p><a href="/">Home</a> · <a href="/about">About</a> · <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a></p>
+    <p>Built to help patients ask better questions. Not a substitute for clinical care.</p>
+    <p><a href="/">Chat</a> · <a href="/consult">Full consult</a> · <a href="/about">About</a> · <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a></p>
   </footer>
 </body>
 </html>

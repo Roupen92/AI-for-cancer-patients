@@ -1,6 +1,11 @@
 """Patient-stories search: pulls podcast episodes from a curated allowlist of
-patient-voice cancer podcasts (iTunes Search API, no key required) and written
-narratives from trusted-patient-story sites (Brave Search, existing key).
+patient-voice podcasts (iTunes Search API, no key required) and written
+narratives from trusted patient-story sites (Perplexity, Brave fallback).
+
+Works for any condition. The written-story allowlist is anchored on
+healthtalk.org, a research-grade narrative archive covering 100+ conditions;
+the podcast allowlist is still cancer-weighted, so non-cancer conditions lean
+on the written side.
 
 Stage-aware ranking + keyword denylist at the tool layer so the agent gets
 results that won't traumatize the patient. iTunes results are cached per
@@ -32,12 +37,16 @@ _ITUNES_CACHE_LOCK = asyncio.Lock()
 _ITUNES_TTL_SECONDS = 3600  # 1 hour
 _ITUNES_EPISODE_LIMIT = 200  # iTunes lookup supports up to 200; older episodes can be topical
 
-# Generic cancer-domain words that match too many episodes if used as required filter terms.
-# We use these only as ranking boosts, not as required matches.
-_CANCER_DOMAIN_STOPWORDS = {
+# Generic medical words that match too many episodes if used as required filter
+# terms. We use these only as ranking boosts, not as required matches.
+_DOMAIN_STOPWORDS = {
     "cancer", "care", "treatment", "patient", "patients", "story", "stories",
     "chemo", "chemotherapy", "stage", "stages", "diagnosed", "diagnosis",
     "tumor", "tumour", "oncology", "oncologist",
+    # General-medicine additions — same problem, any condition.
+    "disease", "condition", "chronic", "illness", "syndrome", "disorder",
+    "health", "medical", "doctor", "hospital", "clinic", "symptoms", "living",
+    "life", "journey", "surgery", "medication", "medicine", "therapy",
 }
 
 # Words in non-English (or specifically Spanish) titles that signal the episode
@@ -52,13 +61,15 @@ _NON_ENGLISH_TITLE_MARKERS = re.compile(
 SCHEMA = {
     "name": "patient_stories_search",
     "description": (
-        "Find patient-voice stories (podcast episodes and written narratives) about "
-        "people who went through a similar cancer. Pulls from a curated allowlist of "
-        "trusted sources (Cancer.Net, Macmillan, MSKCC, Dana-Farber, ACS, Stupid Cancer, "
-        "CancerCare, The Patient Story, etc.) — NOT general podcast search. "
-        "Pass the cancer type, stage, and treatment phase so results can be matched and "
-        "older/mismatched stories can be flagged. Each result is registered in the "
-        "evidence ledger so you can cite it as [N]."
+        "Find patient-voice stories (written narratives and podcast episodes) from "
+        "people who went through a similar condition — any condition, not just "
+        "cancer. Pulls from a curated allowlist of trusted sources (Healthtalk, "
+        "Macmillan, the American Heart Association, the National Kidney Foundation, "
+        "Crohn's & Colitis Foundation, Cancer.Net, MSKCC, Dana-Farber and others) — "
+        "NOT general web or podcast search. Pass the condition, plus stage and "
+        "treatment phase when they apply, so results can be matched and "
+        "mismatched or dated stories can be flagged. Each result is registered in "
+        "the evidence ledger so you can cite it as [N]."
     ),
     "parameters": {
         "type": "object",
@@ -66,27 +77,32 @@ SCHEMA = {
             "query": {
                 "type": "string",
                 "description": (
-                    "Short search phrase using cancer-type and treatment concepts only — "
+                    "Short search phrase using condition and treatment concepts only — "
                     "NOT the patient's raw case text. Examples: 'stage 2 breast cancer chemo', "
-                    "'esophageal cancer radiation swallowing', 'glioblastoma treatment'."
+                    "'heart failure diagnosis first year', 'ulcerative colitis biologics', "
+                    "'stroke recovery speech'."
                 ),
             },
-            "cancer_type": {
+            "condition": {
                 "type": "string",
-                "description": "Cancer type extracted from the case (e.g., 'breast', 'esophageal', 'colorectal').",
+                "description": (
+                    "The condition extracted from the case (e.g., 'breast cancer', "
+                    "'heart failure', 'Crohn's disease', 'stroke', 'type 1 diabetes')."
+                ),
             },
             "stage": {
                 "type": "string",
                 "description": (
-                    "Stage if known: 'I', 'II', 'III', 'IV', or empty if unknown. Used for "
-                    "matching and to filter out terminal-stage content for curative-intent patients."
+                    "Cancer stage if known ('I', 'II', 'III', 'IV'), or empty. Leave empty "
+                    "for non-cancer conditions. Used for matching and to keep end-of-life "
+                    "content away from patients who did not ask for it."
                 ),
             },
             "treatment_phase": {
                 "type": "string",
                 "description": (
                     "One of: 'just diagnosed', 'about to start', 'currently in treatment', "
-                    "'post-treatment', 'survivorship'. Empty if unknown."
+                    "'post-treatment', 'living with it long term'. Empty if unknown."
                 ),
             },
             "max_results": {
@@ -95,7 +111,7 @@ SCHEMA = {
                 "description": "Number of stories to return (default 5, max 8).",
             },
         },
-        "required": ["query", "cancer_type"],
+        "required": ["query", "condition"],
     },
 }
 
@@ -116,9 +132,19 @@ _CURATIVE_DENYLIST_TERMS = re.compile(
 )
 
 
-def _is_curative_intent(stage: str) -> bool:
-    s = (stage or "").strip().upper()
-    return s in ("I", "II", "III", "1", "2", "3", "STAGE I", "STAGE II", "STAGE III")
+def _should_filter_end_of_life(stage: str) -> bool:
+    """Whether to drop hospice / end-of-life / terminal stories from the results.
+
+    True unless the patient's own words put them at advanced/stage-IV disease.
+    Unknown stage counts as "filter" on purpose: most patients — and every
+    patient with a non-cancer condition, where staging language doesn't apply —
+    have not asked to read about dying, and surfacing it unrequested is a harm.
+    A stage-IV patient who wants that content still gets it, because their stage
+    is stated.
+    """
+    s = (stage or "").strip().upper().replace("STAGE", "").strip()
+    advanced = s in ("IV", "4", "V")
+    return not advanced
 
 
 def _stage_match_score(case_stage: str, story_text: str) -> int:
@@ -217,11 +243,11 @@ async def _itunes_search_allowlisted(
     # Required terms come from cancer_type; everything else is boost-only.
     cancer_tokens = [
         t.lower() for t in re.findall(r"\w+", cancer_type or "")
-        if len(t) >= 3 and t.lower() not in _CANCER_DOMAIN_STOPWORDS
+        if len(t) >= 3 and t.lower() not in _DOMAIN_STOPWORDS
     ]
     boost_tokens = [
         t.lower() for t in re.findall(r"\w+", query or "")
-        if len(t) >= 3 and t.lower() not in _CANCER_DOMAIN_STOPWORDS
+        if len(t) >= 3 and t.lower() not in _DOMAIN_STOPWORDS
         and t.lower() not in cancer_tokens
     ]
 
@@ -231,7 +257,7 @@ async def _itunes_search_allowlisted(
         return_exceptions=True,
     )
 
-    curative = _is_curative_intent(case_stage)
+    curative = _should_filter_end_of_life(case_stage)
 
     scored: list[tuple[int, dict]] = []
     for cid, episodes in zip(podcasts.values(), episodes_by_show):
@@ -286,7 +312,7 @@ async def _perplexity_stories(
     results, _err = await _perplexity.search(
         query, allowed_domains=domains, max_results=count, fetch_count=count * 3
     )
-    curative = _is_curative_intent(case_stage)
+    curative = _should_filter_end_of_life(case_stage)
     out: list[dict] = []
     for hit in results:
         title = hit["title"]
@@ -343,7 +369,7 @@ async def _brave_stories(
         return []
 
     web_results = ((data.get("web") or {}).get("results") or [])
-    curative = _is_curative_intent(case_stage)
+    curative = _should_filter_end_of_life(case_stage)
     out: list[dict] = []
     for hit in web_results:
         title = hit.get("title") or ""
@@ -390,17 +416,19 @@ def _stale_flag(year: str) -> str:
 async def run(args: dict, ctx) -> str:
     query = (args.get("query") or "").strip()
     if not query:
-        return "Error: empty query. Pass cancer type + treatment concepts."
+        return "Error: empty query. Pass the condition + treatment concepts."
 
-    cancer_type = (args.get("cancer_type") or "").strip()
+    # `cancer_type` is the pre-generalization parameter name; still accepted so an
+    # older prompt or a cached tool schema doesn't silently lose the condition.
+    condition = (args.get("condition") or args.get("cancer_type") or "").strip()
     stage = (args.get("stage") or "").strip()
     treatment_phase = (args.get("treatment_phase") or "").strip()
     max_results = max(1, min(int(args.get("max_results") or 5), 8))
 
-    # Build effective search query — append cancer type if not already in query.
+    # Build effective search query — append the condition if not already in query.
     q = query
-    if cancer_type and cancer_type.lower() not in q.lower():
-        q = f"{cancer_type} {q}".strip()
+    if condition and condition.lower() not in q.lower():
+        q = f"{condition} {q}".strip()
 
     # Pull allowlists from config. Defensive: if the stories config isn't there
     # (e.g., during a partial deploy), fall back to sensible defaults.

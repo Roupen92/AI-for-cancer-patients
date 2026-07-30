@@ -111,7 +111,9 @@ FETCH_SCHEMA = {
 def _apply_bias(query: str, bias: dict | None) -> str:
     if not bias:
         return query
-    terms = bias.get("mesh_terms") or []
+    # Accept both spellings: config used to say "mesh", which silently disabled
+    # the whole bias mechanism. Read either key so a config typo can't do that again.
+    terms = bias.get("mesh_terms") or bias.get("mesh") or []
     if not terms:
         return query
     clause = " AND (" + " OR ".join(f'"{m}"[MeSH]' for m in terms) + ")"

@@ -55,36 +55,67 @@ SCHEMA = {
 
 
 # Country-keyed directory allowlists. Keys normalized to lowercase.
+# General-purpose benefits/assistance directories come FIRST in each list: the
+# Brave fallback path truncates to 6 `site:` clauses, so the domains that serve
+# any condition must survive truncation. Disease-specific charities follow.
 _DIRECTORIES: dict[str, list[str]] = {
     "united states": [
-        "cancercare.org", "needymeds.org", "panfoundation.org",
-        "healthwellfoundation.org", "copays.org", "triagecancer.org",
-        "cancerlegalresources.org", "cancerfac.org", "lls.org",
-        "ulmanfoundation.org", "lazarex.org",
-        "dol.gov", "eeoc.gov", "medicare.gov", "ssa.gov",
-        "cancer.org", "cancer.net", "cancer.gov",
+        # Condition-agnostic first
+        "benefits.gov", "findhelp.org", "211.org", "ssa.gov", "medicare.gov",
+        "medicaid.gov", "healthcare.gov", "dol.gov", "eeoc.gov",
+        "needymeds.org", "patientadvocate.org", "panfoundation.org",
+        "healthwellfoundation.org", "copays.org", "ruralhealthinfo.org",
+        "aging.gov", "eldercare.acl.gov",
+        # Disease-specific programs
+        "cancercare.org", "triagecancer.org", "cancerfac.org", "lls.org",
+        "kidneyfund.org", "kidney.org", "heart.org", "diabetes.org",
+        "lung.org", "alz.org", "arthritis.org",
     ],
     "united kingdom": [
-        "macmillan.org.uk", "cancerresearchuk.org", "mariecurie.org.uk",
-        "citizensadvice.org.uk", "gov.uk", "nhs.uk",
+        "gov.uk", "nhs.uk", "citizensadvice.org.uk", "turn2us.org.uk",
+        "carersuk.org", "moneyhelper.org.uk",
+        "macmillan.org.uk", "mariecurie.org.uk", "cancerresearchuk.org",
+        "kidneycareuk.org", "bhf.org.uk", "diabetes.org.uk",
+        "asthmaandlung.org.uk", "alzheimers.org.uk", "versusarthritis.org",
+        "stroke.org.uk", "mssociety.org.uk",
     ],
     "canada": [
-        "cancer.ca", "wellspring.ca", "canada.ca",
+        "canada.ca", "211.ca", "cancer.ca", "wellspring.ca",
+        "heartandstroke.ca", "diabetes.ca", "kidney.ca", "alzheimer.ca",
+        "arthritis.ca", "lung.ca",
     ],
     "australia": [
-        "cancer.org.au", "canteen.org.au", "cancercouncil.com.au", "servicesaustralia.gov.au",
+        "servicesaustralia.gov.au", "healthdirect.gov.au", "carergateway.gov.au",
+        "askizzy.org.au",
+        "cancer.org.au", "cancercouncil.com.au", "canteen.org.au",
+        "heartfoundation.org.au", "diabetesaustralia.com.au",
+        "kidney.org.au", "lungfoundation.com.au", "dementia.org.au",
     ],
     "ireland": [
-        "cancer.ie", "citizensinformation.ie",
+        "citizensinformation.ie", "hse.ie", "cancer.ie", "irishheart.ie",
+        "diabetes.ie", "ika.ie",
     ],
     "new zealand": [
-        "cancer.org.nz",
+        "workandincome.govt.nz", "health.govt.nz", "cancer.org.nz",
+        "heartfoundation.org.nz", "diabetes.org.nz", "kidney.health.nz",
     ],
     "germany": [
+        "bundesgesundheitsministerium.de", "gesundheitsinformation.de",
         "krebsinformationsdienst.de", "krebshilfe.de",
+        "herzstiftung.de", "diabetesde.org", "nierenstiftung.de",
     ],
     "france": [
-        "ligue-cancer.net", "e-cancer.fr",
+        "service-public.fr", "ameli.fr", "sante.fr",
+        "ligue-cancer.net", "e-cancer.fr", "fedecardio.org",
+        "federationdesdiabetiques.org", "francerein.org",
+    ],
+    "india": [
+        "nhp.gov.in", "pmjay.gov.in", "cancerindia.org.in",
+        "diabetesindia.org.in", "kidneywarriors.org",
+    ],
+    "netherlands": [
+        "rijksoverheid.nl", "thuisarts.nl", "kwf.nl", "hartstichting.nl",
+        "nierstichting.nl", "diabetesfonds.nl",
     ],
 }
 
@@ -101,6 +132,8 @@ _COUNTRY_ALIASES = {
     "de": "germany", "deutschland": "germany",
     "fr": "france",
     "ie": "ireland", "eire": "ireland",
+    "in": "india", "bharat": "india",
+    "nl": "netherlands", "holland": "netherlands", "the netherlands": "netherlands",
 }
 
 
@@ -138,8 +171,10 @@ async def run(args: dict, ctx) -> str:
         return (
             f"I do not have a curated resource directory for '{country_raw}'. "
             "Try a general patient_source_search restricted to international "
-            "patient sites (cancer.net, macmillan.org.uk, cancer.gov) and tell "
-            "the patient to look for a local cancer-support organization."
+            "patient sites (medlineplus.gov, who.int, nhs.uk) plus the patient's "
+            "own condition charity, and tell the patient plainly that you could "
+            "not verify country-specific programs for where they live — then point "
+            "them to their hospital's social worker, who will know the local system."
         )
 
     # Perplexity first (post-filtered to the country's directory allowlist).

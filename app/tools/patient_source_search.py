@@ -1,8 +1,10 @@
-"""Curated Brave search restricted to patient-facing trusted sources.
+"""Curated search restricted to patient-facing trusted sources, any condition.
 
-The agent passes its specialty's `trusted_sources` list (from config.py) and we
-build `(site:a OR site:b OR ...) <query>`. Returns ranked hits and registers them
-in the evidence ledger as `source_kind="patient_source"` so [N] citations work.
+The agent passes its specialty's `trusted_sources` list (from config.py).
+Perplexity is the primary backend (it ranks broadly, then we post-filter to the
+allowlist); Brave is the fallback, where we build `(site:a OR site:b OR ...)
+<query>` and have to truncate to 6 domains. Returns ranked hits and registers
+them in the evidence ledger as `source_kind="patient_source"` so [N] citations work.
 """
 import logging
 import os
@@ -17,8 +19,9 @@ _API = "https://api.search.brave.com/res/v1/web/search"
 SCHEMA = {
     "name": "patient_source_search",
     "description": (
-        "Search a curated allowlist of patient-facing cancer education and support "
-        "sites (Cancer.Net, NCI, ACS, Macmillan, your specialty bodies, and academic "
+        "Search a curated allowlist of patient-facing health education sites "
+        "(MedlinePlus, the NHS, CDC, NICE, the patient organization for the "
+        "condition in question, your own specialty bodies, and academic medical-center "
         "patient pages). Use this as your DEFAULT tool — it produces patient-friendly "
         "results, not clinician jargon. Pass the trusted-source list your role "
         "config gives you. Each result is registered in the evidence ledger so you "
@@ -37,7 +40,7 @@ SCHEMA = {
                 "description": (
                     "Trusted-source domains to restrict the search to. Pass the list "
                     "your role config specifies. If empty, the search will use a small "
-                    "default allowlist of authoritative patient-facing oncology orgs."
+                    "default allowlist of authoritative general patient-health sites."
                 ),
             },
             "max_results": {
@@ -52,12 +55,12 @@ SCHEMA = {
 
 
 _DEFAULT_ALLOWLIST = [
-    "cancer.net",
-    "cancer.gov",
-    "cancer.org",
-    "macmillan.org.uk",
-    "cancerresearchuk.org",
-    "cancercare.org",
+    "medlineplus.gov",
+    "nhs.uk",
+    "cdc.gov",
+    "nih.gov",
+    "mayoclinic.org",
+    "who.int",
 ]
 
 
