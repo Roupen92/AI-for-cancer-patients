@@ -904,7 +904,17 @@ FOCUS STRINGS
 For each specialist you select, write a `focus`: one or two sentences telling that agent exactly what to research for THIS patient, phrased as an instruction. Include the condition and any detail from the profile or conversation that changes the answer (stage, treatment, location, dietary preference, physical limitation). Do not copy the patient's whole message; distill the task.
 
 RED FLAGS
-Set `red_flag.present` to true if the message describes anything that needs urgent in-person assessment or emergency care rather than research: chest pain or pressure, sudden severe breathlessness, signs of stroke (face droop, arm weakness, speech trouble, sudden confusion, sudden vision loss), fainting, a fever while on chemotherapy or immune-suppressing medicine, uncontrolled or heavy bleeding, coughing or vomiting blood, a severe allergic reaction, a sudden severe headache described as the worst ever, new inability to move or feel a limb, thoughts of suicide or self-harm, or a mention that a baby or child is seriously unwell. When in doubt, set it true — a false alarm costs a sentence, a miss costs a life. In `why`, name the specific symptom you saw. In `action`, say in one plain sentence what they should do right now (call emergency services, go to the emergency room, call their on-call clinic line, call a crisis line).
+Set `red_flag.present` to true if the message describes anything that needs urgent in-person assessment or emergency care rather than research: chest pain or pressure, sudden severe breathlessness, signs of stroke (face droop, arm weakness, speech trouble, sudden confusion, sudden vision loss), fainting, a fever while on chemotherapy or immune-suppressing medicine, uncontrolled or heavy bleeding, coughing or vomiting blood, a severe allergic reaction, a sudden severe headache described as the worst ever, new inability to move or feel a limb, thoughts of suicide or self-harm, or a mention that a baby or child is seriously unwell. When in doubt, set it true — a false alarm costs a sentence, a miss costs a life.
+
+`why` AND `action` ARE SHOWN TO THE PATIENT WORD FOR WORD. Write them for them, not about them.
+- `why`: a SHORT everyday noun phrase naming the symptom, under 12 words, no explanation and no clinical reasoning. It gets dropped into the sentence "You mentioned **___**." so it has to fit there.
+  GOOD: "chest pain that spreads to your arm" · "a fever while on chemotherapy" · "thoughts of harming yourself"
+  BAD: "The patient is describing crushing chest pain which may indicate acute coronary syndrome" (that is a note about them, in the wrong voice, and far too long)
+- `action`: ONE or two plain sentences addressed to "you", saying what to do right now.
+  GOOD: "Call 999 now for an ambulance — do not drive yourself." (for a patient in the UK)
+  BAD: "Advise the patient to contact their care team" (that is an instruction to the system, not to the patient)
+  MATCH THE EMERGENCY NUMBER TO THE PATIENT'S COUNTRY, taken from their profile or the conversation: 911 in the US and Canada, 999 in the UK, 112 across the EU and much of the world, 000 in Australia, 111 in New Zealand. Telling someone in Texas to dial 999 hands them a dead line at the worst possible moment. If you do not know their country, write "your local emergency number" and do not guess a digit.
+- Never put your reasoning in either field. `reasoning` is where reasoning goes; nobody sees that one.
 A red flag does NOT stop the rest of the routing. Still choose agents and answer, because the patient asked something and deserves an answer as well as the warning.
 
 CONDITION AND TOPIC

@@ -195,6 +195,37 @@ def screen(text: str) -> RedFlag:
         return RedFlag()
 
 
+# Phrases that mean a string was written ABOUT the patient for the system,
+# rather than TO the patient. The router is an LLM and drifts into clinical
+# note-taking voice ("The patient is asking for an exact insulin dose…",
+# "Advise the patient to contact their care team"), which reads as nonsense
+# when spliced into "You mentioned **…**".
+_THIRD_PERSON = re.compile(
+    r"\b(the\s+patient|patient\s+(is|may|should|appears|reports|seems)|"
+    r"advise\s+(the\s+)?patient|do\s+not\s+provide|the\s+user|"
+    r"safety\s+guardrails?|guardrails?)\b",
+    re.IGNORECASE,
+)
+
+
+def clean_patient_phrase(text: str, *, max_chars: int) -> str:
+    """Return `text` only if it is safe to show a patient verbatim, else "".
+
+    Rejects clinician/system voice and anything long enough to be a rationale
+    rather than a phrase. The caller always has a safe default to fall back on,
+    so dropping a borderline string costs nothing and keeps a leaked internal
+    note off a frightened person's screen.
+    """
+    s = " ".join((text or "").split())
+    if not s:
+        return ""
+    if len(s) > max_chars:
+        return ""
+    if _THIRD_PERSON.search(s):
+        return ""
+    return s
+
+
 def emergency_markdown(flag: RedFlag, action: str = "") -> str:
     """The block shown to the patient, above everything else in the answer.
 
@@ -210,7 +241,10 @@ def emergency_markdown(flag: RedFlag, action: str = "") -> str:
     if flag.is_crisis:
         return f"## {prompts.EMERGENCY_BANNER_HEADING}\n\n{prompts.CRISIS_LINES_BLOCK}\n"
 
-    why = flag.why or "something you described"
+    # `why` is spliced into a sentence, so it must be a short noun phrase; `action`
+    # stands alone but must still be addressed to the patient.
+    why = clean_patient_phrase(flag.why, max_chars=140) or "something you described"
+    safe_action = clean_patient_phrase(action, max_chars=320)
     default_action = (
         "Please call your local emergency number (911 in the US, 999 in the UK, "
         "112 in much of Europe, 000 in Australia), or go to your nearest emergency "
@@ -221,7 +255,7 @@ def emergency_markdown(flag: RedFlag, action: str = "") -> str:
         f"## {prompts.EMERGENCY_BANNER_HEADING}\n\n"
         f"You mentioned **{why}**. That needs someone to examine you in person, "
         f"and it needs to happen now — not after you finish reading this.\n\n"
-        f"{action.strip() or default_action}\n\n"
+        f"{safe_action or default_action}\n\n"
         f"Do not wait to see whether it settles, and do not drive yourself if you "
         f"feel faint or short of breath.\n\n"
         f"---\n\n"

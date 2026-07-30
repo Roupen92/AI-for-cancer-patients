@@ -43,6 +43,26 @@
   }
   const escapeAttr = escapeHtml;
 
+  // Reference URLs come from third-party search results (Perplexity, Brave,
+  // PubMed, ClinicalTrials.gov) and are rendered as clickable links. The
+  // markdown body is sanitized by DOMPurify, but the reference list and the
+  // citation tooltip build their anchors directly — and escaping stops an
+  // attribute breakout without stopping a `javascript:` or `data:` scheme from
+  // being clickable. Allow http(s) only; anything else renders as inert text.
+  function safeUrl(raw) {
+    const url = String(raw == null ? "" : raw).trim();
+    if (!url) return "";
+    try {
+      // Parsed with no base, so a relative path or a non-URL string throws
+      // rather than silently becoming a same-origin link to nowhere. Every real
+      // source URL is absolute.
+      const parsed = new URL(url);
+      return parsed.protocol === "http:" || parsed.protocol === "https:" ? url : "";
+    } catch (e) {
+      return "";
+    }
+  }
+
   // --- Markdown + citations -------------------------------------------------
   function expandCitationGroup(group) {
     const nums = (group.match(/\d+/g) || []).map(Number);
@@ -102,9 +122,10 @@
     if (ref.journal) meta.push(escapeHtml(ref.journal));
     if (ref.year) meta.push(escapeHtml(String(ref.year)));
     if (ref.article_type) meta.push(escapeHtml(ref.article_type));
-    const urlHtml = ref.url
-      ? `<a href="${escapeAttr(ref.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ref.url)}</a>`
-      : "";
+    const href = safeUrl(ref.url);
+    const urlHtml = href
+      ? `<a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(href)}</a>`
+      : escapeHtml(ref.url || "");
     const lay = (ref.lay_summary || "").trim();
     const layHtml = lay
       ? `<div class="ref-lay"><span class="ref-lay-label">In plain English:</span> ${escapeHtml(lay)}</div>`
@@ -185,8 +206,9 @@
       .filter(Boolean)
       .map((v) => escapeHtml(String(v)))
       .join(" · ");
-    const urlBit = ref.url
-      ? `<a href="${escapeAttr(ref.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a>`
+    const ttHref = safeUrl(ref.url);
+    const urlBit = ttHref
+      ? `<a href="${escapeAttr(ttHref)}" target="_blank" rel="noopener noreferrer">Open source ↗</a>`
       : "";
     const lay = (ref.lay_summary || "").trim();
     const layBlock = lay
@@ -262,6 +284,7 @@
     ACTIVITY_VERBS,
     escapeHtml,
     escapeAttr,
+    safeUrl,
     renderMarkdown,
     transformCitations,
     kindBadgeFor,

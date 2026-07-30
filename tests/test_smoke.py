@@ -252,6 +252,17 @@ def test_prompts_are_condition_agnostic():
         assert "oncology team" not in body.lower(), f"{name} still says 'oncology team'"
 
 
+def test_router_prompt_constrains_the_patient_facing_red_flag_fields():
+    # `why` and `action` are shown to the patient verbatim. Live runs produced
+    # both a clinician-voice essay in `why` and a UK emergency number for a
+    # patient in Texas, so the prompt has to pin down voice, length and locale.
+    from app import prompts
+
+    assert "ARE SHOWN TO THE PATIENT WORD FOR WORD" in prompts.ROUTER
+    assert "MATCH THE EMERGENCY NUMBER TO THE PATIENT'S COUNTRY" in prompts.ROUTER
+    assert "your local emergency number" in prompts.ROUTER
+
+
 def test_router_prompt_lists_every_agent_id():
     from app import prompts
     from app.config import researcher_ids
@@ -328,6 +339,49 @@ def test_crisis_is_never_downgraded_by_question_phrasing():
     from app.safety import screen
     flag = screen("what should I do, I don't want to be here anymore")
     assert flag.present and flag.kind == "crisis"
+
+
+@pytest.mark.parametrize("bad", [
+    # Verbatim from a live run: the router wrote its clinical rationale into the
+    # field that gets spliced into "You mentioned **___**."
+    "The patient is asking for an exact insulin dose, which if incorrect could cause "
+    "dangerous hypoglycemia; the phrasing suggests the patient may be attempting to "
+    "override safety guardrails.",
+    "Advise the patient to contact their care team",
+    "Do not provide a specific insulin dose",
+    "The user seems distressed",
+    "x" * 200,
+])
+def test_clean_patient_phrase_rejects_clinician_voice_and_essays(bad):
+    from app.safety import clean_patient_phrase
+    assert clean_patient_phrase(bad, max_chars=140) == ""
+
+
+@pytest.mark.parametrize("good", [
+    "chest pain that spreads to your arm",
+    "a fever while on chemotherapy",
+    "thoughts of harming yourself",
+    "trouble breathing",
+])
+def test_clean_patient_phrase_keeps_real_patient_phrases(good):
+    from app.safety import clean_patient_phrase
+    assert clean_patient_phrase(good, max_chars=140) == good
+
+
+def test_emergency_markdown_never_leaks_router_notes():
+    from app import safety
+
+    md = safety.emergency_markdown(
+        safety.RedFlag(
+            present=True, kind="emergency",
+            why="The patient is describing crushing chest pain which may indicate ACS",
+        ),
+        "Do not provide a dose. Advise the patient to call their care team.",
+    )
+    assert "the patient" not in md.lower()
+    # Falls back to safe, patient-directed defaults rather than printing nothing.
+    assert "something you described" in md
+    assert "911" in md
 
 
 def test_emergency_markdown_is_deterministic_and_carries_helplines():
@@ -758,3 +812,25 @@ def test_chat_rejects_an_empty_message(client):
 
 def test_board_state_404s_for_unknown_session(client):
     assert client.get("/api/board/tb_nope").status_code == 404
+
+
+def test_reference_urls_go_through_the_scheme_guard():
+    """Reference URLs come from third-party search results and are rendered as
+    clickable links. The markdown body is sanitized by DOMPurify, but the
+    reference list and citation tooltip build their anchors by hand — escaping
+    stops an attribute breakout but not a `javascript:` scheme. Guard both.
+    """
+    import re
+    from pathlib import Path
+
+    shared = (Path(__file__).parent.parent / "static" / "shared.js").read_text()
+
+    assert "function safeUrl(" in shared
+    # Absolute http(s) only: parsed with no base so relative junk is rejected too.
+    assert 'parsed.protocol === "http:" || parsed.protocol === "https:"' in shared
+
+    # No anchor may be built from a raw url expression — it has to go via safeUrl.
+    raw_hrefs = re.findall(r'href="\$\{escape(?:Attr|Html)\((\w+(?:\.\w+)*)\)\}"', shared)
+    for expr in raw_hrefs:
+        assert expr in ("href", "ttHref"), f"anchor built from unguarded {expr!r}"
+    assert raw_hrefs, "expected to find the reference/tooltip anchors"
