@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-from app import board, chat, sessions, llm, prompts  # noqa: E402
+from app import board, chat, health, sessions, llm, prompts  # noqa: E402
 
 log = logging.getLogger("uvicorn.error")
 
@@ -34,6 +34,7 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    health.log_startup_state()
     cleanup_task = asyncio.create_task(sessions.cleanup_loop())
     try:
         yield
@@ -107,6 +108,19 @@ class ChatRequest(BaseModel):
 class ChatAccepted(BaseModel):
     conversation_id: str
     turn_id: str
+
+
+@app.get("/api/health")
+async def health_check(probe: int = 0) -> dict:
+    """Which backends are configured, and (with `?probe=1`) which actually work.
+
+    Probing is opt-in because it spends tokens and a search query — but it is the
+    only thing that catches an expired key, whose symptom is otherwise just every
+    agent politely abstaining at every patient.
+    """
+    if probe:
+        return await health.probe()
+    return {"probed": False, **health.snapshot()}
 
 
 @app.get("/api/team")

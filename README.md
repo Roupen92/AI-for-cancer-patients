@@ -138,8 +138,26 @@ GET    /api/chat/{cid}                            full transcript + references
 DELETE /api/chat/{cid}/turns/{tid}                cancel a turn
 GET    /api/chat/{cid}/lay_summary/{label}        plain-English rewrite of one citation
 GET    /api/team                                  the specialist catalogue
+GET    /api/health                                which backends are configured (free)
+GET    /api/health?probe=1                        which backends actually work (costs a call)
 POST   /api/board                                 one-shot full consult (original API)
 ```
+
+### Check your backends before you trust an answer
+
+The app's worst failure mode is silent. If the search key lapses, every
+specialist retrieves nothing, the citation gate does its job, and every agent
+honestly abstains — so a patient gets "I couldn't find anything" for every
+question and nothing says the credential is dead. It looks like a bad product
+rather than an expired token.
+
+```bash
+curl localhost:8000/api/health?probe=1
+```
+
+`search.redundant: false` means you are one lapsed key away from that state.
+PubMed, Europe PMC, Semantic Scholar and ClinicalTrials.gov keep working
+without any credential, but the patient-facing plain-language sources go dark.
 
 ## Deploy
 

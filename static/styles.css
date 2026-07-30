@@ -104,6 +104,7 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 16px;
+  flex-wrap: wrap;
 }
 
 .brand {
@@ -117,6 +118,12 @@ body {
 .topbar nav {
   display: flex;
   gap: 18px;
+  /* Five links do not fit a 375px phone. Wrapping keeps them all reachable and,
+     crucially, stops the nav from pushing the whole page into horizontal scroll —
+     which on a chat page means the composer slides off-screen while you type. */
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  row-gap: 4px;
 }
 
 .topbar nav a {
@@ -1475,8 +1482,26 @@ main {
     display: none !important;
   }
 
-  /* "Print this answer" prints just the one message. */
+  /* "Print this answer" prints the answer and the question that produced it. */
   .printing-one .msg:not(.print-target) { display: none !important; }
+
+  /* The question keeps its shape but drops the chat-bubble styling, which wastes
+     ink and reads oddly on paper. */
+  .msg-user.print-target { align-items: flex-start; }
+  .msg-user.print-target .msg-bubble {
+    background: none;
+    color: black;
+    border: 1px solid #999;
+    border-radius: 4px;
+    max-width: 100%;
+    box-shadow: none;
+    font-style: italic;
+  }
+  .msg-user.print-target .msg-bubble::before {
+    content: "You asked: ";
+    font-style: normal;
+    font-weight: 700;
+  }
 
   .msg-assistant {
     border: none;
@@ -1496,3 +1521,41 @@ main {
    per-message source lists. One normalize-style rule fixes the whole class of
    bug for both pages. Kept last so nothing can override it. */
 [hidden] { display: none !important; }
+
+/* --- No horizontal scroll, ever ------------------------------------------ */
+/* A page that scrolls sideways on a phone hides the composer while you type. */
+html, body {
+  max-width: 100%;
+  overflow-x: hidden;
+}
+
+@media (max-width: 600px) {
+  .topbar-inner { gap: 8px; }
+  .topbar nav { gap: 14px; font-size: 0.9rem; }
+}
+
+/* --- Right-to-left answers ------------------------------------------------ */
+/* Answers are translated into whatever language the patient asked for, which
+   includes right-to-left scripts. renderMarkdown stamps dir="auto" per block so
+   the browser resolves direction from the content.
+
+   These use LOGICAL properties (inline-start/end) rather than left/right, so
+   they flip automatically. An attribute selector cannot do this job: the
+   attribute value is literally "auto", so [dir="rtl"] never matches even when
+   the computed direction is rtl. text-align is left alone — its initial value
+   `start` already follows direction. */
+.msg-body ul,
+.msg-body ol,
+.result-markdown ul,
+.result-markdown ol {
+  margin-left: 0;
+  margin-right: 0;
+  margin-inline-start: 1.15rem;
+}
+
+.msg-body blockquote,
+.result-markdown blockquote {
+  border-left: 0;
+  border-inline-start: 3px solid var(--border-strong);
+  padding-inline-start: 14px;
+}

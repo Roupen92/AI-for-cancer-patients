@@ -96,7 +96,22 @@
     marked.setOptions({ breaks: true, gfm: true });
     let html = marked.parse(md || "");
     html = transformCitations(html, idPrefix);
-    target.innerHTML = DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel"] });
+    target.innerHTML = DOMPurify.sanitize(html, { ADD_ATTR: ["target", "rel", "dir"] });
+    // Answers are translated into whatever language the patient asked for, which
+    // includes right-to-left scripts (Arabic, Hebrew, Persian, Urdu). `dir="auto"`
+    // lets the browser pick the direction per block from its first strong
+    // character, so an Arabic answer reads right-to-left while the English
+    // institution names and [N] labels inside it still sit correctly.
+    target.setAttribute("dir", "auto");
+    // TOP-LEVEL BLOCKS ONLY. The `dir=auto` algorithm resolves direction from
+    // the first strong character in an element's text but SKIPS any descendant
+    // that carries its own dir attribute. So stamping nested elements blinds
+    // their parent: dir on the <li>s makes their <ul> find no strong character
+    // and fall back to ltr, and dir on a blockquote's inner <p> does the same to
+    // the blockquote — leaving bullets and quote bars on the wrong side of an
+    // Arabic answer. Setting only the direct children lets each block resolve
+    // from its own text, and everything inside inherits the result.
+    Array.from(target.children).forEach((el) => el.setAttribute("dir", "auto"));
     // Make every outbound link safe to click from a shared device.
     target.querySelectorAll("a[href^='http']").forEach((a) => {
       a.setAttribute("target", "_blank");

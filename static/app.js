@@ -519,11 +519,18 @@
         }
       });
       actions.querySelector(".act-print").addEventListener("click", () => {
+        // Print the answer AND the question that produced it. The whole point of
+        // this button is handing the page to a clinician, and an answer with no
+        // question on it is a page they cannot place.
+        const question = el.previousElementSibling;
+        const asked = question && question.classList.contains("msg-user") ? question : null;
         el.classList.add("print-target");
+        if (asked) asked.classList.add("print-target");
         document.body.classList.add("printing-one");
         window.print();
         setTimeout(() => {
           el.classList.remove("print-target");
+          if (asked) asked.classList.remove("print-target");
           document.body.classList.remove("printing-one");
         }, 500);
       });

@@ -814,6 +814,78 @@ def test_board_state_404s_for_unknown_session(client):
     assert client.get("/api/board/tb_nope").status_code == 404
 
 
+def test_health_endpoint_is_free_unless_you_ask_it_to_probe(client):
+    # Probing spends tokens and a search query, so an uptime pinger hitting
+    # /api/health must not trigger it.
+    body = client.get("/api/health").json()
+    assert body["probed"] is False
+    assert set(body["llm"]) == {"provider", "model", "key_configured"}
+    assert set(body["search"]) == {"perplexity", "brave", "any_configured"}
+    assert "pubmed" in body["keyless_sources"]
+
+
+def test_health_snapshot_reads_every_accepted_key_alias(monkeypatch):
+    from app import health
+
+    for var in ("PERPLEXITY_API_KEY", "PPLX_API_KEY", "Brave_API",
+                "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    snap = health.snapshot()
+    assert snap["search"] == {"perplexity": False, "brave": False, "any_configured": False}
+
+    # The alias spellings must count, or health would cry wolf on a working setup.
+    monkeypatch.setenv("PPLX_API_KEY", "x")
+    monkeypatch.setenv("BRAVE_SEARCH_API_KEY", "y")
+    snap = health.snapshot()
+    assert snap["search"]["perplexity"] and snap["search"]["brave"]
+    assert snap["search"]["any_configured"] is True
+
+
+def test_health_startup_logging_warns_when_search_is_gone(monkeypatch, caplog):
+    import logging
+
+    from app import health
+
+    for var in ("PERPLEXITY_API_KEY", "PPLX_API_KEY", "Brave_API",
+                "BRAVE_API_KEY", "BRAVE_SEARCH_API_KEY"):
+        monkeypatch.delenv(var, raising=False)
+    with caplog.at_level(logging.INFO, logger="app.health"):
+        health.log_startup_state()
+    assert any("No search backend configured" in r.message for r in caplog.records)
+
+
+def test_rtl_direction_is_stamped_on_top_level_blocks_only():
+    """Answers get translated into right-to-left languages, so rendered markdown
+    carries dir="auto". The subtlety: the dir=auto algorithm resolves direction
+    from an element's first strong character but SKIPS descendants that have
+    their own dir attribute. Stamping nested nodes therefore blinds their
+    parent — dir on <li> makes the <ul> fall back to ltr, and dir on a
+    blockquote's inner <p> does the same to the blockquote — putting bullets and
+    quote bars on the wrong side of an Arabic answer.
+    """
+    from pathlib import Path
+
+    shared = (Path(__file__).parent.parent / "static" / "shared.js").read_text()
+
+    assert 'target.setAttribute("dir", "auto")' in shared
+    assert "Array.from(target.children).forEach" in shared
+    # No blanket descendant stamping.
+    assert 'querySelectorAll("p, li' not in shared
+    assert 'querySelectorAll("p, ul' not in shared
+
+    import re
+
+    styles = (Path(__file__).parent.parent / "static" / "styles.css").read_text()
+    # Strip comments — the stylesheet documents why [dir="rtl"] is wrong, and the
+    # explanation must not read as a violation.
+    rules = re.sub(r"/\*.*?\*/", "", styles, flags=re.S)
+    # Logical properties are what actually flip; physical left/right cannot, and
+    # a [dir="rtl"] selector never matches because the attribute value is "auto".
+    assert "margin-inline-start" in rules
+    assert "border-inline-start" in rules
+    assert '[dir="rtl"]' not in rules
+
+
 def test_reference_urls_go_through_the_scheme_guard():
     """Reference URLs come from third-party search results and are rendered as
     clickable links. The markdown body is sanitized by DOMPurify, but the
