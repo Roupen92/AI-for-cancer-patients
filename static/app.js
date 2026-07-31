@@ -246,6 +246,12 @@
         });
         if (!retry.ok) throw new Error((await retry.json().catch(() => ({}))).detail || `Server returned ${retry.status}`);
         payload = await retry.json();
+      } else if (r.status === 429) {
+        // Rate limited. The server's message is already written for a patient,
+        // so show it as a calm reply rather than an error the user must decode.
+        const body = await r.json().catch(() => ({}));
+        softStop(body.detail || "Please try again in a few minutes.");
+        return;
       } else if (!r.ok) {
         const body = await r.json().catch(() => ({}));
         throw new Error(body.detail || `Server returned ${r.status}`);
@@ -262,6 +268,23 @@
     try { sessionStorage.setItem(CONV_KEY, state.conversationId); } catch (e) {}
 
     startStream();
+  }
+
+  function softStop(msg) {
+    // A limit or a pause is not a crash — no red error styling, no alarm. The
+    // reader is often unwell; being told to wait should look like being told to
+    // wait, not like something broke.
+    if (state.currentTurnEl) {
+      state.currentTurnEl.classList.remove("is-working");
+      setTurnStatus("");
+      const body = state.currentTurnEl.querySelector(".msg-body");
+      body.innerHTML = "";
+      const p = document.createElement("p");
+      p.textContent = msg;
+      body.appendChild(p);
+    }
+    finishTurn();
+    scrollToBottom(true);
   }
 
   function failTurn(msg) {

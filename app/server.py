@@ -17,7 +17,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-from app import board, chat, health, sessions, llm, prompts  # noqa: E402
+from app import board, chat, health, ratelimit, sessions, llm, prompts  # noqa: E402
 
 log = logging.getLogger("uvicorn.error")
 
@@ -55,6 +55,22 @@ if _origins:
     )
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+def _enforce_rate_limit(request: Request) -> None:
+    """Guard the endpoints that spend LLM and search credits.
+
+    There are no accounts, so the URL alone is an open tap. 429 rather than a
+    silent slowdown, with Retry-After so a well-behaved client can back off.
+    """
+    allowed, retry_after, reason = ratelimit.limiter.check(ratelimit.client_key(request))
+    if allowed:
+        return
+    raise HTTPException(
+        status_code=429,
+        detail=ratelimit.friendly_message(retry_after, reason),
+        headers={"Retry-After": str(retry_after)},
+    )
 
 
 _MAX_ACTIVE_SESSIONS = int(os.getenv("CANCERPATIENT_MAX_ACTIVE_SESSIONS", "20"))
@@ -130,7 +146,8 @@ async def team() -> dict:
 
 
 @app.post("/api/chat", response_model=ChatAccepted, status_code=202)
-async def post_message(req: ChatRequest) -> ChatAccepted:
+async def post_message(req: ChatRequest, request: Request) -> ChatAccepted:
+    _enforce_rate_limit(request)
     if sessions.total_active_turns() >= _MAX_ACTIVE_TURNS:
         raise HTTPException(
             status_code=503,
@@ -288,7 +305,9 @@ class BoardResponse(BaseModel):
 
 
 @app.post("/api/board", response_model=BoardResponse)
-async def start_board(req: PatientRequest) -> BoardResponse:
+async def start_board(req: PatientRequest, request: Request) -> BoardResponse:
+    # A full consult is the most expensive thing here — seven agents in one go.
+    _enforce_rate_limit(request)
     active = sum(1 for s in sessions.SESSIONS.values() if s.finished_at is None)
     if active >= _MAX_ACTIVE_SESSIONS:
         raise HTTPException(

@@ -180,22 +180,54 @@ def chat(
             raise
 
 
-def chat_json(messages, *, model=None, max_retries=5) -> dict:
-    """Like chat() but enforces JSON output and parses defensively.
-
-    Tries response_format=json_object first; on parse failure, strips common
-    markdown fencing and tries again. Raises ValueError if all attempts fail.
-    """
-    resp = chat(messages, response_format={"type": "json_object"}, model=model, max_retries=max_retries)
-    raw = (resp.choices[0].message.content or "").strip()
-    # Try direct parse
+def _parse_json_payload(raw: str) -> dict | None:
+    """Parse a model's JSON reply, tolerating the usual mangling. None if hopeless."""
+    if not raw:
+        return None
     try:
         return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         pass
-    # Strip markdown fences and try again
+    # Markdown fences are the most common wrapper.
     stripped = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.MULTILINE).strip()
     try:
         return json.loads(stripped)
-    except (json.JSONDecodeError, ValueError) as e:
-        raise ValueError(f"LLM returned unparseable JSON: {raw[:200]}...") from e
+    except (json.JSONDecodeError, ValueError):
+        pass
+    # Last resort: the outermost {...} span, which rescues a reply with prose
+    # wrapped around otherwise-valid JSON.
+    start, end = stripped.find("{"), stripped.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(stripped[start : end + 1])
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return None
+
+
+def chat_json(messages, *, model=None, max_retries=5, parse_attempts=2) -> dict:
+    """Like chat() but enforces JSON output and parses defensively.
+
+    A malformed reply is retried, not just re-parsed. GLM 5.2 returns
+    unparseable JSON in roughly one call in thirty, and the router calls this on
+    EVERY patient turn — without a retry those turns silently lose their routing
+    and fall back to the generalist. Retrying costs one cheap call and recovers
+    the turn; `chat()` already handles transport-level retries separately.
+    """
+    last_raw = ""
+    for attempt in range(1, max(1, parse_attempts) + 1):
+        resp = chat(
+            messages,
+            response_format={"type": "json_object"},
+            model=model,
+            max_retries=max_retries,
+        )
+        last_raw = (resp.choices[0].message.content or "").strip()
+        parsed = _parse_json_payload(last_raw)
+        if parsed is not None:
+            return parsed
+        log.warning(
+            "LLM returned unparseable JSON (attempt %d/%d): %r",
+            attempt, parse_attempts, last_raw[:160],
+        )
+    raise ValueError(f"LLM returned unparseable JSON: {last_raw[:200]}...")

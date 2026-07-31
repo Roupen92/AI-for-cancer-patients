@@ -127,6 +127,10 @@ PubMed, Europe PMC, Semantic Scholar and ClinicalTrials.gov need no key.
   faster and is what the tuned setup uses)
 - `CANCERPATIENT_MAX_TOKENS` — output cap, needed on OpenRouter (default 16384)
 - `CANCERPATIENT_MAX_ACTIVE_TURNS`, `CANCERPATIENT_MAX_ACTIVE_SESSIONS` — concurrency caps
+- `CANCERPATIENT_RATE_PER_HOUR` (default 20), `CANCERPATIENT_RATE_PER_DAY` (default 60) —
+  per-IP limits on the endpoints that spend credits. Set both to 0 to disable.
+  Deliberately generous: a clinic, library or care home can put many genuine
+  patients behind one address, so the defaults throttle scripts, not waiting rooms.
 - `CANCERPATIENT_ALLOWED_ORIGINS` — comma-separated CORS allowlist
 
 ## API

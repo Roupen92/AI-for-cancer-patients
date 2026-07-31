@@ -814,6 +814,136 @@ def test_board_state_404s_for_unknown_session(client):
     assert client.get("/api/board/tb_nope").status_code == 404
 
 
+@pytest.mark.parametrize("raw,expected", [
+    ('{"mode":"reply"}', {"mode": "reply"}),
+    ('```json\n{"mode":"reply"}\n```', {"mode": "reply"}),
+    ('Here you go:\n{"mode":"reply"}\nHope that helps!', {"mode": "reply"}),
+    ("", None),
+    ("not json at all", None),
+])
+def test_json_payload_parsing_tolerates_model_mangling(raw, expected):
+    from app.llm import _parse_json_payload
+    assert _parse_json_payload(raw) == expected
+
+
+def test_chat_json_retries_a_malformed_reply(monkeypatch):
+    # Observed live: GLM returns unparseable JSON roughly 1 call in 30, and the
+    # router calls chat_json on EVERY turn — without a retry those turns lose
+    # their routing and silently fall back to the generalist.
+    from app import llm
+
+    calls = {"n": 0}
+
+    def flaky(messages, **kwargs):
+        calls["n"] += 1
+        body = "" if calls["n"] == 1 else '{"mode":"team"}'
+
+        class M:
+            content = body
+        class C:
+            message = M()
+        class R:
+            choices = [C()]
+        return R()
+
+    monkeypatch.setattr(llm, "chat", flaky)
+    assert llm.chat_json([{"role": "user", "content": "x"}]) == {"mode": "team"}
+    assert calls["n"] == 2, "should have retried once"
+
+
+def test_chat_json_gives_up_after_its_attempts(monkeypatch):
+    from app import llm
+
+    calls = {"n": 0}
+
+    def always_bad(messages, **kwargs):
+        calls["n"] += 1
+
+        class M:
+            content = "still not json"
+        class C:
+            message = M()
+        class R:
+            choices = [C()]
+        return R()
+
+    monkeypatch.setattr(llm, "chat", always_bad)
+    with pytest.raises(ValueError, match="unparseable JSON"):
+        llm.chat_json([{"role": "user", "content": "x"}], parse_attempts=2)
+    assert calls["n"] == 2
+
+
+def test_rate_limiter_allows_a_normal_patient_then_stops_a_script():
+    from app.ratelimit import RateLimiter
+
+    rl = RateLimiter(per_hour=5, per_day=100)
+    for i in range(5):
+        allowed, _, _ = rl.check("1.2.3.4")
+        assert allowed, f"blocked a legitimate request at #{i + 1}"
+
+    allowed, retry_after, reason = rl.check("1.2.3.4")
+    assert allowed is False
+    assert reason == "hour"
+    assert 0 < retry_after <= 3600
+
+
+def test_rate_limiter_is_per_client():
+    from app.ratelimit import RateLimiter
+
+    rl = RateLimiter(per_hour=2, per_day=100)
+    rl.check("a"); rl.check("a")
+    assert rl.check("a")[0] is False
+    # A different address behind the same proxy must be unaffected.
+    assert rl.check("b")[0] is True
+
+
+def test_rate_limiter_daily_cap_reports_the_day_reason():
+    from app.ratelimit import RateLimiter
+
+    rl = RateLimiter(per_hour=0, per_day=3)
+    for _ in range(3):
+        assert rl.check("x")[0] is True
+    allowed, retry_after, reason = rl.check("x")
+    assert allowed is False and reason == "day"
+    assert retry_after > 3600
+
+
+def test_rate_limiter_can_be_disabled():
+    from app.ratelimit import RateLimiter
+
+    rl = RateLimiter(per_hour=0, per_day=0)
+    for _ in range(500):
+        assert rl.check("x")[0] is True
+
+
+def test_rate_limit_client_key_prefers_the_original_client(monkeypatch):
+    from app.ratelimit import client_key
+
+    class Req:
+        def __init__(self, headers, host="127.0.0.1"):
+            self.headers = headers
+            self.client = type("C", (), {"host": host})()
+
+    # Railway puts the real client first and the proxy chain after it.
+    assert client_key(Req({"x-forwarded-for": "203.0.113.9, 10.0.0.1, 10.0.0.2"})) == "203.0.113.9"
+    assert client_key(Req({"x-real-ip": "203.0.113.7"})) == "203.0.113.7"
+    assert client_key(Req({})) == "127.0.0.1"
+
+
+def test_rate_limit_message_is_kind_and_points_at_the_care_team():
+    from app.ratelimit import friendly_message
+
+    hourly = friendly_message(600, "hour")
+    daily = friendly_message(7200, "day")
+    for msg in (hourly, daily):
+        # Someone unwell should not be scolded for asking too many questions,
+        # and must never be left waiting on us when something is urgent.
+        assert "care team" in msg
+        assert "error" not in msg.lower()
+    assert "10 minute" in hourly
+    assert "tomorrow" in daily
+
+
 def test_health_endpoint_is_free_unless_you_ask_it_to_probe(client):
     # Probing spends tokens and a search query, so an uptime pinger hitting
     # /api/health must not trigger it.
