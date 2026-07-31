@@ -9,17 +9,19 @@ Two APIs:
   team at once without chatting.
 """
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import time
 from contextlib import asynccontextmanager
+from functools import lru_cache
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -54,7 +56,65 @@ if _origins:
         allow_headers=["*"],
     )
 
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+class RevalidatingStaticFiles(StaticFiles):
+    """StaticFiles that asks the browser to revalidate instead of guessing.
+
+    Starlette sends ETag and Last-Modified but no Cache-Control, which leaves
+    browsers applying *heuristic* freshness — they may reuse a cached asset for
+    hours without ever asking whether it changed. That shipped a genuinely broken
+    page: after the rewrite, returning visitors had fresh HTML but the previous
+    build's styles.css and app.js, so the chat rendered unstyled with no helper
+    chips and nothing in the UI explained why.
+
+    `no-cache` does not mean "don't cache" — it means "revalidate before reuse".
+    Unchanged files still come back as a 304 with no body, so this costs one
+    conditional request and removes a whole class of stale-asset bug.
+    """
+
+    def file_response(self, *args, **kwargs):
+        resp = super().file_response(*args, **kwargs)
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+        return resp
+
+
+app.mount("/static", RevalidatingStaticFiles(directory=str(STATIC_DIR)), name="static")
+
+
+@lru_cache(maxsize=8)
+def _page(filename: str) -> str:
+    """Read a static page and stamp a build version onto its asset URLs.
+
+    Revalidation headers only help clients that ask. A browser already holding a
+    heuristically-fresh copy of styles.css will not ask at all — so the asset URL
+    itself has to change. The version is derived from the contents of the assets,
+    so it changes exactly when they do and never needs bumping by hand.
+    """
+    html = (STATIC_DIR / filename).read_text()
+    return html.replace('href="/static/styles.css"', f'href="/static/styles.css?v={ASSET_VERSION}"') \
+               .replace('src="/static/shared.js"', f'src="/static/shared.js?v={ASSET_VERSION}"') \
+               .replace('src="/static/app.js"', f'src="/static/app.js?v={ASSET_VERSION}"') \
+               .replace('src="/static/consult.js"', f'src="/static/consult.js?v={ASSET_VERSION}"')
+
+
+def _compute_asset_version() -> str:
+    h = hashlib.sha256()
+    for name in sorted(("styles.css", "shared.js", "app.js", "consult.js")):
+        path = STATIC_DIR / name
+        if path.exists():
+            h.update(path.read_bytes())
+    return h.hexdigest()[:12]
+
+
+ASSET_VERSION = _compute_asset_version()
+
+
+def _html(filename: str) -> HTMLResponse:
+    # The page itself must always be revalidated, otherwise a stale HTML would
+    # keep pointing at the old ?v= and the fix could never reach the client.
+    return HTMLResponse(
+        _page(filename),
+        headers={"Cache-Control": "no-cache, must-revalidate"},
+    )
 
 
 def _enforce_rate_limit(request: Request) -> None:
@@ -83,24 +143,24 @@ _MAX_TURNS_PER_CONVERSATION = int(os.getenv("CANCERPATIENT_MAX_TURNS_PER_CONVERS
 # --------------------------------------------------------------------------- #
 
 @app.get("/")
-async def root() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
+async def root() -> HTMLResponse:
+    return _html("index.html")
 
 
 @app.get("/about")
-async def about() -> FileResponse:
-    return FileResponse(STATIC_DIR / "about.html")
+async def about() -> HTMLResponse:
+    return _html("about.html")
 
 
 @app.get("/privacy")
-async def privacy() -> FileResponse:
-    return FileResponse(STATIC_DIR / "privacy.html")
+async def privacy() -> HTMLResponse:
+    return _html("privacy.html")
 
 
 @app.get("/consult")
-async def consult_page() -> FileResponse:
+async def consult_page() -> HTMLResponse:
     """The original one-shot form, kept as a separate page."""
-    return FileResponse(STATIC_DIR / "consult.html")
+    return _html("consult.html")
 
 
 # --------------------------------------------------------------------------- #

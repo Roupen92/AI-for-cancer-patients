@@ -944,6 +944,51 @@ def test_rate_limit_message_is_kind_and_points_at_the_care_team():
     assert "tomorrow" in daily
 
 
+def test_pages_stamp_a_version_on_asset_urls(client):
+    """Returning visitors were served fresh HTML with the PREVIOUS build's
+    styles.css and app.js, so the chat rendered unstyled with no helper chips.
+    Revalidation headers alone cannot fix a browser that never asks — the asset
+    URL has to change, so it carries a hash of the asset contents.
+    """
+    import re
+    from app.server import ASSET_VERSION
+
+    for path in ("/", "/consult"):
+        html = client.get(path).text
+        assets = re.findall(r'(?:href|src)="/static/([^"?]+)(\?v=([a-f0-9]+))?"', html)
+        for name, query, version in assets:
+            if name.endswith((".css", ".js")):
+                assert query, f"{path} -> /static/{name} has no cache-busting version"
+                assert version == ASSET_VERSION
+
+
+def test_asset_version_tracks_content(tmp_path, monkeypatch):
+    from app import server
+
+    first = server._compute_asset_version()
+    assert first == server._compute_asset_version(), "version must be stable"
+
+    css = server.STATIC_DIR / "styles.css"
+    original = css.read_bytes()
+    try:
+        css.write_bytes(original + b"\n/* touched */\n")
+        assert server._compute_asset_version() != first, "version must change with content"
+    finally:
+        css.write_bytes(original)
+    assert server._compute_asset_version() == first
+
+
+def test_pages_and_static_ask_the_browser_to_revalidate(client):
+    # Without this the browser applies heuristic freshness and can serve a stale
+    # bundle for hours with no way for a deploy to reach it.
+    page = client.get("/")
+    assert "no-cache" in page.headers.get("cache-control", "")
+
+    asset = client.get("/static/styles.css")
+    assert asset.status_code == 200
+    assert "no-cache" in asset.headers.get("cache-control", "")
+
+
 def test_health_reports_how_the_caller_was_identified(client):
     # If proxy header handling were wrong every visitor would share one bucket and
     # real patients would throttle each other. This is how that stays observable
