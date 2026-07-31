@@ -127,16 +127,23 @@ class ChatAccepted(BaseModel):
 
 
 @app.get("/api/health")
-async def health_check(probe: int = 0) -> dict:
+async def health_check(request: Request, probe: int = 0) -> dict:
     """Which backends are configured, and (with `?probe=1`) which actually work.
 
     Probing is opt-in because it spends tokens and a search query — but it is the
     only thing that catches an expired key, whose symptom is otherwise just every
     agent politely abstaining at every patient.
+
+    `rate_limit.client` echoes how THIS caller was identified. Behind a proxy that
+    is the check that matters: if header handling were wrong, every visitor would
+    collapse into one bucket and real patients would start getting throttled by
+    each other's traffic.
     """
+    key = ratelimit.client_key(request)
+    rate = {"client": key, **ratelimit.limiter.remaining(key)}
     if probe:
-        return await health.probe()
-    return {"probed": False, **health.snapshot()}
+        return {**await health.probe(), "rate_limit": rate}
+    return {"probed": False, **health.snapshot(), "rate_limit": rate}
 
 
 @app.get("/api/team")

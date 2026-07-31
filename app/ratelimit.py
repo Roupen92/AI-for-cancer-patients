@@ -98,6 +98,20 @@ class RateLimiter:
             hits.append(now)
             return True, 0, ""
 
+    def remaining(self, key: str) -> dict:
+        """Quota left for a client, without consuming any. Diagnostics only."""
+        now = time.time()
+        with self._lock:
+            hits = self._buckets.get(key, _Bucket()).hits
+            recent = [t for t in hits if now - t <= DAY]
+            in_hour = sum(1 for t in recent if now - t <= HOUR)
+        return {
+            "used_this_hour": in_hour,
+            "used_today": len(recent),
+            "per_hour": self.per_hour,
+            "per_day": self.per_day,
+        }
+
     def reset(self) -> None:
         with self._lock:
             self._buckets.clear()

@@ -944,6 +944,19 @@ def test_rate_limit_message_is_kind_and_points_at_the_care_team():
     assert "tomorrow" in daily
 
 
+def test_health_reports_how_the_caller_was_identified(client):
+    # If proxy header handling were wrong every visitor would share one bucket and
+    # real patients would throttle each other. This is how that stays observable
+    # in production without spending credits to find out.
+    body = client.get("/api/health", headers={"x-forwarded-for": "203.0.113.44, 10.0.0.1"}).json()
+    rl = body["rate_limit"]
+    assert rl["client"] == "203.0.113.44"
+    assert set(rl) == {"client", "used_this_hour", "used_today", "per_hour", "per_day"}
+    # Reading health must not consume any of the caller's quota.
+    again = client.get("/api/health", headers={"x-forwarded-for": "203.0.113.44"}).json()
+    assert again["rate_limit"]["used_this_hour"] == rl["used_this_hour"]
+
+
 def test_health_endpoint_is_free_unless_you_ask_it_to_probe(client):
     # Probing spends tokens and a search query, so an uptime pinger hitting
     # /api/health must not trigger it.
