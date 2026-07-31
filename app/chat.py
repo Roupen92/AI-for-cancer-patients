@@ -383,6 +383,14 @@ async def run_turn(
         "timing": timing_summary,
         "location_inferred": conv.location_parsed or {},
     }
+    board.log_timing(
+        f"turn {conv.cid}/{turn.tid}",
+        timing_summary,
+        mode=route_result.mode,
+        status=status,
+        refs=len(references),
+        lang=target_language,
+    )
     emit("timing_summary", timing_summary)
     emit("turn_complete", result)
     return result

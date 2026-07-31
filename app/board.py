@@ -465,6 +465,36 @@ def _build_timing_summary(timing: dict, total_s: float) -> dict:
     }
 
 
+def log_timing(label: str, summary: dict, **extra) -> None:
+    """One line per turn showing where the wall clock actually went.
+
+    The timing dict was only ever streamed to the browser, which is useless for
+    diagnosing a slow production turn — nobody has the SSE stream open when a
+    patient complains. This puts the same breakdown in the server log, so
+    `railway logs` answers "where did those 90 seconds go" directly.
+
+    Agents run in parallel, so their seconds sum to more than the wall clock;
+    `slowest` is the one that actually set the pace.
+    """
+    specs = summary.get("specialists") or []
+    slowest = max(specs, key=lambda s: s.get("wall_s", 0), default=None)
+    bits = " ".join(
+        f"{k}={summary.get(k + '_s', 0)}"
+        for k in ("router", "synth", "gloss", "plain", "translate", "tool")
+    )
+    log.info(
+        "TIMING %s total=%ss | %s | llm_calls=%s tool_calls=%s | agents=[%s]%s%s",
+        label,
+        summary.get("total_s"),
+        bits,
+        summary.get("llm_calls"),
+        summary.get("tool_calls"),
+        ", ".join(f"{s['id']}:{s['wall_s']}s" for s in specs) or "none",
+        f" | slowest={slowest['id']} {slowest['wall_s']}s" if slowest else "",
+        "".join(f" {k}={v}" for k, v in extra.items()),
+    )
+
+
 def _new_timing() -> dict:
     return {
         "specialists": {},
@@ -723,6 +753,7 @@ async def run_consult(
         "location_inferred": loc,
         "specialists": active_ids,
     }
+    log_timing("consult", summary, agents=len(active_ids))
     emit("timing_summary", summary)
     emit("final", final)
     return final
