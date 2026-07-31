@@ -12,3 +12,8 @@ image/issuestofix/
 
 # Local debugging screenshots / dev artifacts (not part of the app)
 *.png
+
+# Eval artifacts — regenerable with `python -m tests.eval.loop_eval capture`.
+# The harness code is tracked; its captured inputs and generated answers are not.
+tests/eval/fixtures/
+tests/eval/runs/

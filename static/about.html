@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>About — Cancer Support</title>
+  <title>About — Patient Guide</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234A7C6F'/%3E%3Cpath d='M9 16h4l2-5 3 10 2-5h3' stroke='white' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -11,17 +12,17 @@
 </head>
 <body>
   <div class="disclaimer-banner" role="region" aria-label="Important notice">
-    <strong>This is not medical advice.</strong> Always talk to your oncology team before making any decisions.
+    <strong>This is not medical advice.</strong> Always talk to your care team before making any decisions.
   </div>
 
   <header class="topbar" role="banner">
     <div class="topbar-inner">
-      <a href="/" class="brand">Cancer Support</a>
+      <a href="/" class="brand">Patient Guide</a>
       <nav aria-label="Primary">
-        <a href="/">Home</a>
-        <a href="/about">About</a>
+        <a href="/">Chat</a>
+        <a href="/consult">Full consult</a>
+        <a href="/about" aria-current="page">About</a>
         <a href="/privacy">Privacy</a>
-        <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a>
       </nav>
     </div>
   </header>
@@ -32,48 +33,89 @@
     <article class="result-markdown" style="margin-top:20px">
       <h2>What this is</h2>
       <p>
-        Cancer Support is a free tool that helps patients and family caregivers understand
-        cancer in plain language. You tell it about your situation, and five AI helpers
-        — a movement specialist, a dietician, a speech-and-swallowing specialist (when
-        relevant), an emotional wellbeing helper, and a patient navigator — search trusted
-        public medical sources and put together a summary you can bring to your next
-        appointment.
+        Patient Guide is a free tool that helps patients and family caregivers understand
+        their health in plain language — whatever the condition. Cancer, heart failure,
+        diabetes, kidney disease, stroke, Parkinson's, COPD, inflammatory bowel disease,
+        long COVID, chronic pain, or a diagnosis nobody has explained to you yet.
+      </p>
+      <p>
+        The idea is simple: your doctors have access to clinical guidelines, the published
+        research on PubMed, and the clinical trial registry. You have access to exactly the
+        same public sources — but they are written for clinicians. This tool puts an AI layer
+        in between that searches those sources and translates what it finds into your language,
+        at a reading level anyone can follow, with a link to every claim so you can check it.
+      </p>
+
+      <h2>How it decides who answers</h2>
+      <p>
+        You ask a question in your own words. A triage step reads it and brings in only the
+        helpers who are actually relevant — usually one, sometimes a small team of three or
+        four. A question about salt in heart failure goes to the dietitian. "I was just
+        diagnosed and I'm overwhelmed" brings in several. The helpers available are:
+      </p>
+      <ul>
+        <li><strong>Medical Research</strong> — explains conditions, tests, treatments, and what the published evidence actually shows (including how strong it is)</li>
+        <li><strong>Physiotherapist</strong> — rehab, pain, balance, walking, recovery after surgery or stroke</li>
+        <li><strong>Exercise &amp; Activity</strong> — getting fitter safely with a long-term condition</li>
+        <li><strong>Dietitian</strong> — food, salt, fluid, carbohydrates, appetite, eating through side effects</li>
+        <li><strong>Speech &amp; Swallowing</strong> — swallowing trouble, voice, speech, language</li>
+        <li><strong>Emotional Wellbeing</strong> — distress, anxiety, low mood, sleep, coping, caregiver strain</li>
+        <li><strong>Clinical Trials</strong> — searches ClinicalTrials.gov for open studies you could ask your specialist about</li>
+        <li><strong>Patient Navigator</strong> — money, insurance, transport, work rights, benefits, home help, in your country</li>
+        <li><strong>Stories from Others</strong> — first-person accounts from people who've been through something similar</li>
+      </ul>
+      <p>
+        Whatever the helpers write then goes through two more passes: one that makes sure every
+        organization is named in plain English (so "NICE" becomes "NICE, the body that writes
+        treatment guidance for the UK's health service"), and one that rewrites the whole thing
+        at a plainer reading level. That last pass is checked mechanically — if it drops a
+        number, a dose, or a source, the original is kept instead. Vague advice is not the goal;
+        specific, checkable advice is.
       </p>
 
       <h2>What this is not</h2>
       <p>
-        <strong>This is not medical advice.</strong> It does not diagnose your cancer,
-        recommend treatments, or replace your oncology team. It is general information
+        <strong>This is not medical advice.</strong> It does not diagnose you, recommend
+        treatments, prescribe anything, or replace your care team. It is general information
         from public sources, written in plain language.
       </p>
       <p>
-        We do not store medical advice for you. We do not have access to your medical
-        records. We do not know your full situation. Your oncology team does.
+        It cannot tell you whether you qualify for a clinical trial or a financial-assistance
+        program — only that one exists and is worth asking about. It cannot interpret your
+        specific scan or blood result. We do not have access to your medical records and we do
+        not know your full situation. Your care team does.
       </p>
-
-      <h2>Who built it</h2>
       <p>
-        Cancer Support uses the same architecture as a research tool called the AI Tumor
-        Board, but redesigned from the ground up for patients and caregivers instead of
-        clinicians. Every claim made by a helper must be backed by a source you can check.
-      </p>
-
-      <h2>Open source</h2>
-      <p>
-        This is a free, open-source project, released under the Apache 2.0 license so anyone
-        can use, study, and build on it. You can read the full source code, report a problem,
-        or contribute on GitHub:
-        <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">github.com/Roupen92/AI-for-cancer-patients</a>.
+        If you describe something urgent — chest pain, trouble breathing, signs of a stroke, a
+        fever while on treatment that weakens your immune system, thoughts of harming yourself —
+        the tool will tell you to get help immediately instead of researching it. Please listen
+        to that.
       </p>
 
       <h2>Where the information comes from</h2>
       <p>
-        The helpers search trusted patient-facing oncology organizations
-        (American Cancer Society, Cancer.Net by ASCO, the National Cancer Institute,
-        Macmillan, Cancer Research UK, and others), peer-reviewed medical literature
-        on PubMed, and specialty-body guidance (APTA Oncology, ASHA, ESPEN, AOSW).
-        Citations in your summary link to the actual sources so you can read the
-        original.
+        The helpers are restricted to a curated allowlist of trusted sources and are not allowed
+        to answer from the AI model's own memory. Every clinical claim has to carry a citation to
+        something that was actually retrieved. Sources include:
+      </p>
+      <ul>
+        <li>Government and public-service patient information: MedlinePlus (US National Library of Medicine), the NHS, CDC, NIH, WHO, NICE, healthdirect Australia</li>
+        <li>Condition-specific patient organizations: the American Heart Association, the American Diabetes Association, the National Kidney Foundation, the American Lung Association, the Alzheimer's Association, the Parkinson's Foundation, Crohn's &amp; Colitis Foundation, the American Cancer Society, Cancer.Net (ASCO), Macmillan Cancer Support, and others</li>
+        <li>Peer-reviewed medical literature via PubMed, Europe PMC, and Semantic Scholar</li>
+        <li>ClinicalTrials.gov, the U.S. government's public registry of clinical trials</li>
+        <li>Professional bodies: APTA, ASHA, RCSLT, the Academy of Nutrition and Dietetics, ESPEN, ACSM, AOSW</li>
+        <li>Major academic medical centers' patient pages: Mayo Clinic, Cleveland Clinic, Johns Hopkins, MSK, MD Anderson, Dana-Farber</li>
+        <li>Patient-voice archives for the stories helper, anchored on Healthtalk, a UK research archive of recorded real-patient experiences across more than 100 conditions</li>
+      </ul>
+      <p>
+        Citations in your answer link to the actual source so you can read the original. Hover
+        any <span class="cite">[1]</span> to see what it says in plain English.
+      </p>
+
+      <h2>Where this came from</h2>
+      <p>
+        It began as a patient-facing companion to a research tool called the AI Tumor Board,
+        built for clinicians, and now covers all conditions rather than cancer alone.
       </p>
 
       <h2>If you are in crisis</h2>
@@ -84,15 +126,16 @@
       <ul>
         <li>United States: <strong>988</strong> (Suicide and Crisis Lifeline)</li>
         <li>United Kingdom: <strong>116 123</strong> (Samaritans)</li>
-        <li>Canada: <strong>1-833-456-4566</strong> (Talk Suicide Canada)</li>
+        <li>Canada: <strong>988</strong> (Suicide Crisis Helpline)</li>
+        <li>Australia: <strong>13 11 14</strong> (Lifeline)</li>
         <li>Other countries: <a href="https://findahelpline.com" target="_blank" rel="noopener noreferrer">findahelpline.com</a></li>
       </ul>
     </article>
   </main>
 
   <footer class="footer" role="contentinfo">
-    <p>Built to help cancer patients ask better questions. Not a substitute for clinical care.</p>
-    <p><a href="/">Home</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a></p>
+    <p>Built to help patients ask better questions. Not a substitute for clinical care.</p>
+    <p><a href="/">Chat</a> · <a href="/consult">Full consult</a> · <a href="/privacy">Privacy</a></p>
   </footer>
 </body>
 </html>

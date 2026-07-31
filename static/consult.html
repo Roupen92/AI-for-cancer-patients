@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Full consult — Patient Guide</title>
+  <meta name="description" content="Describe your whole situation once and get a plain-language summary from a full team of helpers, with sources. Not medical advice — bring it to your care team." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234A7C6F'/%3E%3Cpath d='M9 16h4l2-5 3 10 2-5h3' stroke='white' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
+</head>
+<body>
+  <div class="disclaimer-banner" role="region" aria-label="Important notice">
+    <strong>This is not medical advice.</strong> Always talk to your care team before making any decisions.
+  </div>
+
+  <header class="topbar" role="banner">
+    <div class="topbar-inner">
+      <a href="/" class="brand">Patient Guide</a>
+      <nav aria-label="Primary">
+        <a href="/">Chat</a>
+        <a href="/consult" aria-current="page">Full consult</a>
+        <a href="/about">About</a>
+        <a href="/privacy">Privacy</a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+
+    <!-- FORM VIEW -->
+    <section id="view-form" class="view view-form" aria-labelledby="form-heading">
+      <h1 id="form-heading" class="hero-h1">Get a full team consult</h1>
+      <p class="hero-sub">
+        Describe your situation once and the whole team looks at it together — research,
+        movement, nutrition, speech and swallowing when relevant, emotional wellbeing,
+        practical help, and stories from other people. You get one plain-language summary
+        with sources, built to print and take to your next appointment.
+      </p>
+      <p class="hero-alt">
+        Just have a question? <a href="/">Ask it in the chat instead</a> — it's faster and
+        only brings in the helpers you actually need.
+      </p>
+
+      <form id="patient-form" class="patient-form" novalidate>
+        <label class="field" for="case">
+          <span class="field-label">Tell us about your health and what you're dealing with</span>
+          <span class="field-help">Whatever you know: the condition, where it is, how severe or what stage, treatments you're on or have tried, how long it's been going on, and the specific things worrying you. Any condition — cancer, heart, kidney, lung, diabetes, neurological, autoimmune, pain, or something still undiagnosed.</span>
+          <textarea id="case" name="case" rows="8" maxlength="10000" required minlength="20" aria-describedby="case-help"></textarea>
+          <span class="field-error" id="case-error" role="alert"></span>
+        </label>
+
+        <label class="field" for="location">
+          <span class="field-label">Where do you live?</span>
+          <span class="field-help">City, state/province, and country. This is what lets us find programs and services that actually exist where you are.</span>
+          <input id="location" name="location" type="text" maxlength="200" autocomplete="off" />
+        </label>
+
+        <label class="field" for="preferences">
+          <span class="field-label">Anything about your eating or movement we should know? <span class="field-optional">(optional)</span></span>
+          <span class="field-help">Like vegetarian / vegan / halal / kosher, food allergies, the kinds of exercise you enjoy or can do (walking, swimming, yoga, weights), or anything that limits movement (bad knee, back pain, wheelchair). This is how we give you advice you can actually use instead of generic tips.</span>
+          <textarea id="preferences" name="preferences" rows="3" maxlength="500" autocomplete="off"></textarea>
+        </label>
+
+        <label class="field" for="target_language">
+          <span class="field-label">What language do you want the response in?</span>
+          <span class="field-help">English is the default. You can type any language (e.g., Spanish, Mandarin, Armenian).</span>
+          <input id="target_language" name="target_language" type="text" maxlength="60" value="English" autocomplete="off" />
+        </label>
+
+        <label class="checkbox-field" for="ack">
+          <input id="ack" name="ack" type="checkbox" required />
+          <span>I understand this is not medical advice and that I will talk to my doctor before making any decisions.</span>
+        </label>
+
+        <div class="form-actions">
+          <button type="submit" id="submit-btn" class="btn btn-primary">Get my summary</button>
+          <button type="button" id="reset-btn" class="btn btn-ghost">Start over</button>
+        </div>
+      </form>
+
+      <section class="how-it-works" aria-labelledby="how-heading">
+        <h2 id="how-heading">How this works</h2>
+        <ol class="how-steps">
+          <li><strong>You share.</strong> A few details about your health, your location, and your language.</li>
+          <li><strong>The team researches.</strong> A medical researcher, a physiotherapist, a dietitian, a speech-and-swallowing specialist (when relevant), an emotional wellbeing specialist, a patient navigator, and a patient-stories helper search trusted public sources — guidelines, published research, patient organizations.</li>
+          <li><strong>Two more passes.</strong> One checks that every organization is named in plain English. One rewrites the whole thing at a reading level anyone can follow, without dropping a single number or source.</li>
+          <li><strong>You get a summary.</strong> Plain language, in your language, with sources you can check. Bring it to your next appointment.</li>
+        </ol>
+      </section>
+    </section>
+
+    <!-- WORKING VIEW -->
+    <section id="view-working" class="view view-working" aria-labelledby="working-heading" hidden>
+      <div class="working-header">
+        <h2 id="working-heading">Your helpers are working</h2>
+        <button type="button" id="cancel-btn" class="btn btn-ghost">Cancel</button>
+      </div>
+      <p class="working-sub">Usually takes about 2-3 minutes. You can leave this page open.</p>
+
+      <div id="agent-stack" class="agent-stack" role="list"></div>
+
+      <div id="phase-line" class="phase-line" aria-live="polite"></div>
+    </section>
+
+    <!-- RESULT VIEW -->
+    <section id="view-result" class="view view-result" aria-labelledby="result-heading" hidden>
+      <h2 id="result-heading">Your summary</h2>
+      <p id="result-sub" class="result-sub"></p>
+
+      <div class="appt-cta" role="region" aria-label="Take this to your appointment">
+        <div class="appt-cta-text">
+          <strong>📋 Take this to your appointment</strong>
+          <span>Print it, save it as a PDF, or copy it to send to a family member.</span>
+        </div>
+        <div class="appt-cta-actions">
+          <button type="button" id="print-btn" class="btn btn-primary">Print / Save as PDF</button>
+          <button type="button" id="copy-btn" class="btn btn-ghost">Copy as text</button>
+        </div>
+      </div>
+
+      <div class="result-disclaimer" role="region" aria-label="Important reminder">
+        <strong>Before you read this — </strong>
+        this is information to <em>discuss with</em> your care team, not a treatment plan.
+      </div>
+
+      <article id="result-markdown" class="result-markdown"></article>
+
+      <section class="references-section" aria-labelledby="refs-heading">
+        <h3 id="refs-heading">All sources</h3>
+        <p class="refs-hint">Numbers in [brackets] in the summary above match these sources. Hover any one to see it in plain English.</p>
+        <ul id="references-list" class="references-list"></ul>
+      </section>
+
+      <div class="result-disclaimer-bottom" role="region" aria-label="Final reminder">
+        <strong>Reminder:</strong> this isn't medical advice. Bring it to your care team for a real plan.
+      </div>
+
+      <div class="form-actions">
+        <button type="button" id="restart-btn" class="btn btn-primary">Start a new consult</button>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer" role="contentinfo">
+    <p>Built to help patients ask better questions. Not a substitute for clinical care.</p>
+    <p><a href="/">Chat</a> · <a href="/about">About</a> · <a href="/privacy">Privacy</a></p>
+  </footer>
+
+  <script src="/static/shared.js"></script>
+  <script src="/static/consult.js"></script>
+</body>
+</html>

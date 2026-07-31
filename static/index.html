@@ -3,8 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Cancer Support — plain-language help</title>
-  <meta name="description" content="Plain-language cancer support summary from five specialists. Not medical advice — bring this to your oncology team." />
+  <title>Patient Guide — plain-language answers from real medical sources</title>
+  <meta name="description" content="Ask about any condition. A team of AI helpers searches the same guidelines, research and trial registries doctors use, then explains what they found in plain language. Not medical advice." />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234A7C6F'/%3E%3Cpath d='M9 16h4l2-5 3 10 2-5h3' stroke='white' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -12,137 +13,141 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.0/marked.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.0.8/dist/purify.min.js"></script>
 </head>
-<body>
+<body class="body-chat">
   <div class="disclaimer-banner" role="region" aria-label="Important notice">
-    <strong>This is not medical advice.</strong> Always talk to your oncology team before making any decisions.
+    <strong>This is not medical advice.</strong> If something feels urgent, contact your care team or emergency services — don't wait for an answer here.
   </div>
 
   <header class="topbar" role="banner">
     <div class="topbar-inner">
-      <a href="/" class="brand">Cancer Support</a>
+      <a href="/" class="brand">Patient Guide</a>
       <nav aria-label="Primary">
-        <a href="/">Home</a>
+        <a href="/" aria-current="page">Chat</a>
+        <a href="/consult">Full consult</a>
         <a href="/about">About</a>
         <a href="/privacy">Privacy</a>
-        <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a>
       </nav>
     </div>
   </header>
 
-  <main id="main">
+  <main id="main" class="chat-main">
 
-    <!-- FORM VIEW -->
-    <section id="view-form" class="view view-form" aria-labelledby="form-heading">
-      <h1 id="form-heading" class="hero-h1">Get help understanding your cancer</h1>
-      <p class="hero-sub">
-        Five trusted helpers will research your situation using public medical sources and put
-        together a plain-language summary you can bring to your next appointment.
-      </p>
+    <!-- ABOUT-ME PANEL -->
+    <aside class="profile-panel" aria-labelledby="profile-heading">
+      <button type="button" id="profile-toggle" class="profile-toggle" aria-expanded="false" aria-controls="profile-body">
+        <span id="profile-heading">About me</span>
+        <span class="profile-summary" id="profile-summary">Optional — helps us give answers you can actually use</span>
+        <span class="profile-chevron" aria-hidden="true">▾</span>
+      </button>
 
-      <form id="patient-form" class="patient-form" novalidate>
-        <label class="field" for="case">
-          <span class="field-label">Tell us about your cancer and what you're dealing with</span>
-          <span class="field-help">Include the type of cancer if you know it, where in your body it is, what stage, treatments you've tried, and any specific worries.</span>
-          <textarea id="case" name="case" rows="8" maxlength="10000" required minlength="20" aria-describedby="case-help"></textarea>
-          <span class="field-error" id="case-error" role="alert"></span>
+      <div id="profile-body" class="profile-body" hidden>
+        <p class="profile-hint">
+          Nothing here is required, and nothing is stored on our servers — it stays in this browser
+          and is sent with your question so the helpers can be specific instead of generic.
+        </p>
+
+        <label class="field" for="p-condition">
+          <span class="field-label">What condition are you dealing with?</span>
+          <span class="field-help">Anything you know — the diagnosis, the stage or severity, treatments you're on. Cancer, heart failure, diabetes, kidney disease, a new diagnosis nobody has explained yet.</span>
+          <input id="p-condition" type="text" maxlength="500" autocomplete="off" />
         </label>
 
-        <label class="field" for="location">
-          <span class="field-label">Where do you live?</span>
-          <span class="field-help">City, state/province, and country. This helps us find programs near you.</span>
-          <input id="location" name="location" type="text" maxlength="200" autocomplete="off" />
-        </label>
+        <div class="field-row">
+          <label class="field" for="p-location">
+            <span class="field-label">Where do you live?</span>
+            <span class="field-help">City, state/province, country. Needed to find programs and trials near you.</span>
+            <input id="p-location" type="text" maxlength="200" autocomplete="off" />
+          </label>
 
-        <label class="field" for="preferences">
-          <span class="field-label">Anything about your eating or movement we should know? <span class="field-optional">(optional)</span></span>
-          <span class="field-help">Like vegetarian / vegan / halal, food allergies, the kinds of exercise you enjoy or can do (walking, swimming, yoga, weights), or anything that limits movement (bad knee, back pain). This helps us give you advice you can actually use instead of generic tips.</span>
-          <textarea id="preferences" name="preferences" rows="3" maxlength="500" autocomplete="off"></textarea>
-        </label>
+          <label class="field" for="p-language">
+            <span class="field-label">Answer me in</span>
+            <span class="field-help">Any language — Spanish, Mandarin, Arabic, Armenian.</span>
+            <input id="p-language" type="text" maxlength="60" value="English" autocomplete="off" />
+          </label>
 
-        <label class="field" for="target_language">
-          <span class="field-label">What language do you want the response in?</span>
-          <span class="field-help">English is the default. You can type any language (e.g., Spanish, Mandarin, Armenian).</span>
-          <input id="target_language" name="target_language" type="text" maxlength="60" value="English" autocomplete="off" />
-        </label>
-
-        <label class="checkbox-field" for="ack">
-          <input id="ack" name="ack" type="checkbox" required />
-          <span>I understand this is not medical advice and that I will talk to my doctor before making any decisions.</span>
-        </label>
-
-        <div class="form-actions">
-          <button type="submit" id="submit-btn" class="btn btn-primary">Get help</button>
-          <button type="button" id="reset-btn" class="btn btn-ghost">Start over</button>
+          <label class="field field-narrow" for="p-age">
+            <span class="field-label">Age <span class="field-optional">(optional)</span></span>
+            <span class="field-help">Changes some advice.</span>
+            <input id="p-age" type="text" maxlength="20" autocomplete="off" />
+          </label>
         </div>
-      </form>
 
-      <section class="how-it-works" aria-labelledby="how-heading">
-        <h2 id="how-heading">How this works</h2>
-        <ol class="how-steps">
-          <li><strong>You share.</strong> A few details about your cancer, your location, and your language.</li>
-          <li><strong>Five helpers research.</strong> A movement specialist, a dietician, a speech-and-swallowing specialist (when relevant), an emotional wellbeing specialist, and a patient navigator search trusted public sources.</li>
-          <li><strong>You get a summary.</strong> Plain language, in your language, with sources you can check. Bring it to your next appointment.</li>
-        </ol>
-      </section>
-    </section>
+        <label class="field" for="p-preferences">
+          <span class="field-label">Eating or movement things we should know? <span class="field-optional">(optional)</span></span>
+          <span class="field-help">Vegetarian / vegan / halal / kosher, food allergies, exercise you enjoy or can't do, anything that limits movement (bad knee, wheelchair, low energy).</span>
+          <textarea id="p-preferences" rows="2" maxlength="600" autocomplete="off"></textarea>
+        </label>
 
-    <!-- WORKING VIEW -->
-    <section id="view-working" class="view view-working" aria-labelledby="working-heading" hidden>
-      <div class="working-header">
-        <h2 id="working-heading">Your helpers are working</h2>
-        <button type="button" id="cancel-btn" class="btn btn-ghost">Cancel</button>
-      </div>
-      <p class="working-sub">Usually takes about 1-2 minutes. You can leave this page open.</p>
-
-      <div id="agent-stack" class="agent-stack" role="list"></div>
-
-      <div id="phase-line" class="phase-line" aria-live="polite"></div>
-    </section>
-
-    <!-- RESULT VIEW -->
-    <section id="view-result" class="view view-result" aria-labelledby="result-heading" hidden>
-      <h2 id="result-heading">Your summary</h2>
-      <p id="result-sub" class="result-sub"></p>
-
-      <div class="appt-cta" role="region" aria-label="Take this to your appointment">
-        <div class="appt-cta-text">
-          <strong>📋 Take this to your appointment</strong>
-          <span>Print it, save it as a PDF, or copy it to send to a family member.</span>
-        </div>
-        <div class="appt-cta-actions">
-          <button type="button" id="print-btn" class="btn btn-primary">Print / Save as PDF</button>
-          <button type="button" id="copy-btn" class="btn btn-ghost">Copy as text</button>
+        <div class="profile-actions">
+          <button type="button" id="profile-save" class="btn btn-primary btn-small">Save</button>
+          <button type="button" id="profile-clear" class="btn btn-ghost btn-small">Clear everything</button>
         </div>
       </div>
+    </aside>
 
-      <div class="result-disclaimer" role="region" aria-label="Important reminder">
-        <strong>Before you read this — </strong>
-        this is information to <em>discuss with</em> your oncology team, not a treatment plan.
-      </div>
+    <!-- TRANSCRIPT -->
+    <section id="transcript" class="transcript" aria-live="polite" aria-label="Conversation">
+      <div class="intro" id="intro">
+        <h1 class="intro-h1">What can we help you understand?</h1>
+        <p class="intro-sub">
+          Ask about any condition, in your own words. We'll search the same places your
+          doctors do — clinical guidelines, published research, patient organizations and
+          the clinical trial registry — and explain what we find in plain language, with
+          links so you can check every claim.
+        </p>
+        <p class="intro-how">
+          Depending on what you ask, we bring in the helpers who are actually relevant —
+          sometimes one, sometimes a small team.
+        </p>
 
-      <article id="result-markdown" class="result-markdown"></article>
+        <div class="team-strip" id="team-strip" aria-label="The helpers we can call on"></div>
 
-      <section class="references-section" aria-labelledby="refs-heading">
-        <h3 id="refs-heading">All sources</h3>
-        <p class="refs-hint">Numbers in [brackets] in the summary above match these sources.</p>
-        <ul id="references-list" class="references-list"></ul>
-      </section>
-
-      <div class="result-disclaimer-bottom" role="region" aria-label="Final reminder">
-        <strong>Reminder:</strong> this isn't medical advice. Bring it to your oncology team for a real plan.
-      </div>
-
-      <div class="form-actions">
-        <button type="button" id="restart-btn" class="btn btn-primary">Start a new question</button>
+        <div class="starters" id="starters">
+          <p class="starters-label">Not sure where to start?</p>
+          <div class="starter-grid">
+            <button type="button" class="starter" data-fill="I was just diagnosed with type 2 diabetes and I don't really understand what it means. Where do I start?">
+              I was just diagnosed and I don't understand it
+            </button>
+            <button type="button" class="starter" data-fill="My doctor says I have heart failure and I should cut back on salt. How much salt is actually allowed, and what does that look like in real meals?">
+              How much salt can I actually have?
+            </button>
+            <button type="button" class="starter" data-fill="Are there any clinical trials I could ask my specialist about for my condition?">
+              Are there clinical trials I could ask about?
+            </button>
+            <button type="button" class="starter" data-fill="I'm struggling to afford my medication and getting to appointments is hard. What help exists where I live?">
+              I can't afford my medication
+            </button>
+            <button type="button" class="starter" data-fill="I keep coughing when I drink water and food feels like it gets stuck. What could be going on and who should I see?">
+              Food and drink keep going down wrong
+            </button>
+            <button type="button" class="starter" data-fill="I'd like to get more active but I'm scared of overdoing it with my condition. How do I start safely?">
+              I want to get active without overdoing it
+            </button>
+          </div>
+        </div>
       </div>
     </section>
   </main>
 
-  <footer class="footer" role="contentinfo">
-    <p>Built to help cancer patients ask better questions. Not a substitute for clinical care.</p>
-    <p><a href="/about">About</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/Roupen92/AI-for-cancer-patients" target="_blank" rel="noopener">GitHub</a></p>
-  </footer>
+  <!-- COMPOSER -->
+  <div class="composer-wrap">
+    <form id="composer" class="composer">
+      <label class="sr-only" for="message">Your question</label>
+      <textarea id="message" name="message" rows="1" maxlength="6000"
+                placeholder="Ask anything about your condition, your treatment, or what would help…"
+                aria-describedby="composer-hint"></textarea>
+      <div class="composer-buttons">
+        <button type="button" id="stop-btn" class="btn btn-ghost btn-small" hidden>Stop</button>
+        <button type="submit" id="send-btn" class="btn btn-primary">Ask</button>
+      </div>
+    </form>
+    <p class="composer-hint" id="composer-hint">
+      Not medical advice · Don't include your full name, address, or ID numbers ·
+      <a href="/privacy">How we handle this</a>
+    </p>
+  </div>
 
+  <script src="/static/shared.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>

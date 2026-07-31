@@ -1,11 +1,13 @@
 """Tool registry for the patient-facing app.
 
-Slimmed down from the Tumor Board: clinician-decision tools (FDA approvals,
-CIViC variants, RxNorm interactions, ClinicalTrials matcher) are NOT here —
-they would invite the model into prescriptive territory. Added: curated
-patient-facing search + geography-aware resource directory.
+Slimmed down from the Tumor Board: prescriber-facing tools (FDA approvals, CIViC
+variants, RxNorm interaction checks) are NOT here — they would invite the model
+into prescriptive territory. Added: curated patient-facing search, a
+geography-aware resource directory, patient-story retrieval, and a patient-safe
+ClinicalTrials.gov search (guardrailed by prompts.TRIALS, which forbids any
+statement about eligibility).
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Callable, Awaitable
 
 from app.evidence import EvidenceLedger
@@ -17,6 +19,7 @@ from app.tools import (
     patient_source_search,
     social_resource_search,
     patient_stories_search,
+    clinical_trials,
 )
 
 
@@ -25,6 +28,20 @@ class ToolContext:
     specialist_id: str
     pubmed_bias: dict | None
     ledger: EvidenceLedger
+    # Per-run memo of queries already issued, so a tool can short-circuit an
+    # agent that keeps re-asking the same thing. Observed live: the trials agent
+    # searched the registry 11 times with two alternating queries because the
+    # results contained no site near the patient. Keyed by tool name.
+    seen_queries: dict[str, set[str]] = field(default_factory=dict)
+
+    def already_asked(self, tool: str, key: str) -> bool:
+        """Record a query and report whether it was issued earlier this run."""
+        seen = self.seen_queries.setdefault(tool, set())
+        normalized = " ".join((key or "").lower().split())
+        if normalized in seen:
+            return True
+        seen.add(normalized)
+        return False
 
 
 _REGISTRY: dict[str, tuple[dict, Callable[[dict, ToolContext], Awaitable[str]]]] = {
@@ -37,6 +54,7 @@ _REGISTRY: dict[str, tuple[dict, Callable[[dict, ToolContext], Awaitable[str]]]]
     "patient_source_search":   (patient_source_search.SCHEMA,    patient_source_search.run),
     "social_resource_search":  (social_resource_search.SCHEMA,   social_resource_search.run),
     "patient_stories_search":  (patient_stories_search.SCHEMA,   patient_stories_search.run),
+    "clinical_trials_search":  (clinical_trials.SCHEMA,          clinical_trials.run),
 }
 
 

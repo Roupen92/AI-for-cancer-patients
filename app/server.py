@@ -1,4 +1,13 @@
-"""FastAPI app: serves the patient UI and the SSE endpoints."""
+"""FastAPI app: serves the patient chat UI and the SSE endpoints.
+
+Two APIs:
+
+* `/api/chat/*`  — the chat. A conversation holds history + one evidence ledger;
+  each patient message is a turn with its own SSE stream.
+* `/api/board/*` — the original one-shot consult (a form in, a full multi-section
+  summary out). Kept for the eval harness and for anyone who wants the whole
+  team at once without chatting.
+"""
 import asyncio
 import json
 import logging
@@ -16,7 +25,7 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-from app import board, sessions, llm, prompts  # noqa: E402
+from app import board, chat, health, sessions, llm, prompts  # noqa: E402
 
 log = logging.getLogger("uvicorn.error")
 
@@ -25,6 +34,7 @@ STATIC_DIR = Path(__file__).parent.parent / "static"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    health.log_startup_state()
     cleanup_task = asyncio.create_task(sessions.cleanup_loop())
     try:
         yield
@@ -32,7 +42,7 @@ async def lifespan(app: FastAPI):
         cleanup_task.cancel()
 
 
-app = FastAPI(title="AI for Cancer Patients", lifespan=lifespan)
+app = FastAPI(title="Patient Guide — plain-language answers from real medical sources", lifespan=lifespan)
 
 _origins = os.getenv("CANCERPATIENT_ALLOWED_ORIGINS", "").strip()
 if _origins:
@@ -47,16 +57,14 @@ if _origins:
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
-class PatientRequest(BaseModel):
-    case: str = Field(..., min_length=20, max_length=10000)
-    location: str = Field(default="", max_length=200)
-    preferences: str = Field(default="", max_length=500)
-    target_language: str = Field(default="English", max_length=60)
+_MAX_ACTIVE_SESSIONS = int(os.getenv("CANCERPATIENT_MAX_ACTIVE_SESSIONS", "20"))
+_MAX_ACTIVE_TURNS = int(os.getenv("CANCERPATIENT_MAX_ACTIVE_TURNS", "20"))
+_MAX_TURNS_PER_CONVERSATION = int(os.getenv("CANCERPATIENT_MAX_TURNS_PER_CONVERSATION", "2"))
 
 
-class BoardResponse(BaseModel):
-    session_id: str
-
+# --------------------------------------------------------------------------- #
+# Pages
+# --------------------------------------------------------------------------- #
 
 @app.get("/")
 async def root() -> FileResponse:
@@ -73,7 +81,210 @@ async def privacy() -> FileResponse:
     return FileResponse(STATIC_DIR / "privacy.html")
 
 
-_MAX_ACTIVE_SESSIONS = int(os.getenv("CANCERPATIENT_MAX_ACTIVE_SESSIONS", "20"))
+@app.get("/consult")
+async def consult_page() -> FileResponse:
+    """The original one-shot form, kept as a separate page."""
+    return FileResponse(STATIC_DIR / "consult.html")
+
+
+# --------------------------------------------------------------------------- #
+# Chat API
+# --------------------------------------------------------------------------- #
+
+class Profile(BaseModel):
+    condition: str = Field(default="", max_length=500)
+    location: str = Field(default="", max_length=200)
+    language: str = Field(default="English", max_length=60)
+    preferences: str = Field(default="", max_length=600)
+    age: str = Field(default="", max_length=20)
+
+
+class ChatRequest(BaseModel):
+    message: str = Field(..., min_length=2, max_length=6000)
+    conversation_id: str | None = Field(default=None, max_length=64)
+    profile: Profile | None = None
+
+
+class ChatAccepted(BaseModel):
+    conversation_id: str
+    turn_id: str
+
+
+@app.get("/api/health")
+async def health_check(probe: int = 0) -> dict:
+    """Which backends are configured, and (with `?probe=1`) which actually work.
+
+    Probing is opt-in because it spends tokens and a search query — but it is the
+    only thing that catches an expired key, whose symptom is otherwise just every
+    agent politely abstaining at every patient.
+    """
+    if probe:
+        return await health.probe()
+    return {"probed": False, **health.snapshot()}
+
+
+@app.get("/api/team")
+async def team() -> dict:
+    """The catalogue of specialists the router can call."""
+    return {"specialists": chat.specialist_catalogue()}
+
+
+@app.post("/api/chat", response_model=ChatAccepted, status_code=202)
+async def post_message(req: ChatRequest) -> ChatAccepted:
+    if sessions.total_active_turns() >= _MAX_ACTIVE_TURNS:
+        raise HTTPException(
+            status_code=503,
+            detail="The service is busy right now. Please try again in a minute.",
+        )
+
+    if req.conversation_id:
+        conv = sessions.get_conversation(req.conversation_id)
+        if conv is None:
+            # An expired conversation shouldn't dead-end the patient — say so
+            # clearly enough that the client knows to start a new one.
+            raise HTTPException(
+                status_code=404,
+                detail="That conversation has expired. Start a new one and your question will still work.",
+            )
+        if req.profile is not None:
+            conv.profile = req.profile.model_dump()
+    else:
+        conv = sessions.new_conversation(req.profile.model_dump() if req.profile else {})
+
+    if conv.active_turns() >= _MAX_TURNS_PER_CONVERSATION:
+        raise HTTPException(
+            status_code=409,
+            detail="Your previous question is still being researched. Give it a moment.",
+        )
+
+    turn = sessions.new_turn(conv, req.message)
+    emit = sessions.turn_emit_factory(turn)
+
+    async def _runner() -> None:
+        try:
+            turn.result = await chat.run_turn(conv, turn, req.message, emit)
+        except asyncio.CancelledError:
+            emit("error", {"message": "Cancelled."})
+            raise
+        except Exception as e:
+            log.exception("Chat turn failed")
+            msg = f"{type(e).__name__}: {e}"
+            if len(msg) > 240:
+                msg = msg[:237] + "..."
+            emit("error", {"message": msg})
+            turn.error = str(e)
+        finally:
+            # Append the terminator BEFORE marking the turn finished: a streamer
+            # that sees finished_at returns as soon as it has drained, so the end
+            # marker has to already be in the log.
+            turn.append({"type": "__end__", "payload": {}})
+            turn.finished_at = time.time()
+            turn.wakeup.set()
+            conv.touch()
+
+    turn.task = asyncio.create_task(_runner())
+    return ChatAccepted(conversation_id=conv.cid, turn_id=turn.tid)
+
+
+def _get_turn(cid: str, tid: str) -> tuple[sessions.Conversation, sessions.Turn]:
+    conv = sessions.get_conversation(cid)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation")
+    turn = conv.turns.get(tid)
+    if turn is None:
+        raise HTTPException(status_code=404, detail="Unknown turn")
+    return conv, turn
+
+
+@app.get("/api/chat/{cid}/turns/{tid}/stream")
+async def stream_turn(cid: str, tid: str) -> StreamingResponse:
+    _conv, turn = _get_turn(cid, tid)
+
+    async def event_generator():
+        # Index-based read over the turn's append-only log: start at 0, so a client
+        # that connected late or reconnected replays the whole turn. Concurrent
+        # readers are harmless — nobody consumes the log.
+        i = 0
+        while True:
+            while i < len(turn.events):
+                ev = turn.events[i]
+                i += 1
+                if ev.get("type") == "__end__":
+                    return
+                yield f"data: {json.dumps(ev)}\n\n"
+
+            if turn.finished_at is not None:
+                return  # finished and fully drained
+
+            turn.wakeup.clear()
+            # Re-check after clearing, in case an event landed in between.
+            if i < len(turn.events) or turn.finished_at is not None:
+                continue
+            try:
+                await asyncio.wait_for(turn.wakeup.wait(), timeout=15.0)
+            except asyncio.TimeoutError:
+                yield f"event: ping\ndata: {{\"ts\": {time.time()}}}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.delete("/api/chat/{cid}/turns/{tid}")
+async def cancel_turn(cid: str, tid: str) -> dict:
+    _conv, turn = _get_turn(cid, tid)
+    if turn.task and not turn.task.done():
+        turn.task.cancel()
+    return {"cancelled": True, "turn_id": tid}
+
+
+@app.get("/api/chat/{cid}")
+async def conversation_state(cid: str) -> dict:
+    conv = sessions.get_conversation(cid)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation")
+    return chat.public_conversation(conv)
+
+
+@app.get("/api/chat/{cid}/turns/{tid}")
+async def turn_state(cid: str, tid: str) -> dict:
+    _conv, turn = _get_turn(cid, tid)
+    return {
+        "turn_id": tid,
+        "finished": turn.finished_at is not None,
+        "result": turn.result,
+        "error": turn.error,
+    }
+
+
+@app.get("/api/chat/{cid}/lay_summary/{label}")
+async def chat_lay_summary(cid: str, label: str) -> dict:
+    """On-demand plain-English summary for one citation, cached per conversation."""
+    conv = sessions.get_conversation(cid)
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Unknown conversation")
+    cached = bool(conv.lay_summaries.get(label))
+    text = await chat.lay_summary_for(conv, label)
+    if not text and conv.ledger.get_by_label(str(label)) is None:
+        raise HTTPException(status_code=404, detail=f"No reference with label [{label}]")
+    return {"label": label, "lay_summary": text, "cached": cached}
+
+
+# --------------------------------------------------------------------------- #
+# One-shot consult API (original)
+# --------------------------------------------------------------------------- #
+
+class PatientRequest(BaseModel):
+    case: str = Field(..., min_length=20, max_length=10000)
+    location: str = Field(default="", max_length=200)
+    preferences: str = Field(default="", max_length=500)
+    target_language: str = Field(default="English", max_length=60)
+
+
+class BoardResponse(BaseModel):
+    session_id: str
 
 
 @app.post("/api/board", response_model=BoardResponse)

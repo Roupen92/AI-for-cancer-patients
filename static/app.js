@@ -1,732 +1,606 @@
-/* Cancer Support — patient-facing client.
-   Single-page: form → working → result. SSE-driven streaming. */
+/* Patient Guide — chat client.
+   One conversation, many turns. Each turn: POST /api/chat, then stream its SSE
+   until turn_complete. Progress (which helpers were picked, what they're doing)
+   renders inline in the transcript so the wait is legible instead of a spinner. */
 (() => {
   "use strict";
 
+  const PG = window.PG;
   const $ = (sel) => document.querySelector(sel);
-  const $$ = (sel) => Array.from(document.querySelectorAll(sel));
 
-  // --- Agent visual config (matches backend SPECIALIST_CONFIGS) --------------
-  const AGENT_VISUALS = {
-    physio:     { initials: "P",  label: "Physiotherapist",     color: "#4A7C6F", verb: "looking at movement and exercise" },
-    dietician:  { initials: "D",  label: "Dietician",           color: "#8E9F4A", verb: "looking at food and nutrition" },
-    slp:        { initials: "S",  label: "Speech & Swallowing", color: "#5A8FA8", verb: "checking for speech/swallowing concerns" },
-    mental:     { initials: "E",  label: "Emotional Wellbeing", color: "#7A6BAA", verb: "thinking about emotional support" },
-    stories:    { initials: "V",  label: "Stories from Others", color: "#B05E6E", verb: "finding stories from people who've been through this" },
-    navigator:  { initials: "N",  label: "Patient Navigator",   color: "#C97B3F", verb: "looking up practical help and resources" },
-    translator: { initials: "T",  label: "Translator",          color: "#6B5F52", verb: "waiting to translate the final summary" },
-  };
+  const PROFILE_KEY = "pg-profile-v1";
+  const CONV_KEY = "pg-conversation-v1";
 
-  // Order in which placeholder cards appear on the working view.
-  // Stories sits between Emotional Wellbeing and Patient Navigator to match the
-  // synthesizer's section order (mental → stories → practical).
-  const PLACEHOLDER_ROSTER_IDS = ["physio", "dietician", "slp", "mental", "stories", "navigator", "translator"];
-
-  const ACTIVITY_VERBS = {
-    started:        "starting...",
-    thinking:       "thinking...",
-    tool_call:      "looking things up...",
-    tool_result:    "reading sources...",
-    self_checking:  "double-checking the answer...",
-    drafting:       "writing it up...",
-    retrieve_or_abstain: "looking for more evidence...",
-    tool_loop_capped: "wrapping up...",
-  };
-
-  // --- State ----------------------------------------------------------------
   const state = {
-    sid: null,
+    conversationId: null,
+    turnId: null,
     source: null,
-    targetLanguage: "English",
-    roster: [],                  // [{id, display_name, color, conditional}]
-    agentStatus: new Map(),      // id -> "idle"|"working"|"done"|"skipped"|"error"|"no_evidence"
-    agentDetail: new Map(),      // id -> {status, summary, draft_markdown, labels, error, sourceCount}
-    phase: null,                 // null|"synthesizing"|"translating"
-    englishMarkdown: "",
-    translatedMarkdown: "",
-    references: [],              // ledger entries
+    busy: false,
+    refsByLabel: new Map(),   // label -> ref (conversation-wide)
+    currentTurnEl: null,      // the .msg-assistant being built
+    agentCards: new Map(),    // agent id -> card element (current turn)
   };
 
-  // --- View switching -------------------------------------------------------
-  const views = {
-    form:    $("#view-form"),
-    working: $("#view-working"),
-    result:  $("#view-result"),
-  };
-
-  function showView(name) {
-    Object.entries(views).forEach(([k, el]) => {
-      el.hidden = k !== name;
-    });
-    window.scrollTo({ top: 0, behavior: "smooth" });
-  }
-
-  // --- Form handling --------------------------------------------------------
-  const form = $("#patient-form");
-  const caseInput = $("#case");
-  const caseError = $("#case-error");
-
-  // Restore from sessionStorage (if user refreshed mid-typing)
-  try {
-    const saved = JSON.parse(sessionStorage.getItem("cs-form") || "null");
-    if (saved) {
-      caseInput.value = saved.case || "";
-      $("#location").value = saved.location || "";
-      $("#preferences").value = saved.preferences || "";
-      $("#target_language").value = saved.target_language || "English";
-    }
-  } catch (e) { /* ignore */ }
-
-  function persistForm() {
+  // ------------------------------------------------------------------ profile
+  function loadProfile() {
     try {
-      sessionStorage.setItem("cs-form", JSON.stringify({
-        case: caseInput.value,
-        location: $("#location").value,
-        preferences: $("#preferences").value,
-        target_language: $("#target_language").value,
-      }));
-    } catch (e) { /* ignore */ }
-  }
-
-  caseInput.addEventListener("input", () => {
-    if (caseInput.getAttribute("aria-invalid") === "true") {
-      caseInput.setAttribute("aria-invalid", "false");
-      caseError.textContent = "";
-    }
-    persistForm();
-  });
-  $("#location").addEventListener("input", persistForm);
-  $("#preferences").addEventListener("input", persistForm);
-  $("#target_language").addEventListener("input", persistForm);
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const caseText = caseInput.value.trim();
-    const location = $("#location").value.trim();
-    const preferences = $("#preferences").value.trim();
-    const targetLanguage = $("#target_language").value.trim() || "English";
-    const ack = $("#ack").checked;
-
-    if (caseText.length < 20) {
-      caseInput.setAttribute("aria-invalid", "true");
-      caseError.textContent = "Please tell us a bit more — at least a sentence or two.";
-      caseInput.focus();
-      return;
-    }
-    if (!ack) {
-      alert("Please confirm you understand this is not medical advice.");
-      return;
-    }
-
-    state.targetLanguage = targetLanguage;
-
-    const btn = $("#submit-btn");
-    btn.disabled = true;
-    btn.textContent = "Starting...";
-
-    try {
-      const r = await fetch("/api/board", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          case: caseText,
-          location: location,
-          preferences: preferences,
-          target_language: targetLanguage,
-        }),
-      });
-      if (!r.ok) {
-        const body = await r.json().catch(() => ({}));
-        throw new Error(body.detail || `Server returned ${r.status}`);
-      }
-      const data = await r.json();
-      state.sid = data.session_id;
-      sessionStorage.removeItem("cs-form");
-      // Render placeholder cards instantly so the patient sees the helpers
-      // line up before the SSE stream delivers the first board_started event.
-      renderPlaceholderCards();
-      $("#phase-line").textContent = "Connecting to your helpers...";
-      showView("working");
-      startStream();
-    } catch (err) {
-      alert(`Couldn't start your session: ${err.message || err}`);
-    } finally {
-      btn.disabled = false;
-      btn.textContent = "Get help";
-    }
-  });
-
-  $("#reset-btn").addEventListener("click", () => {
-    caseInput.value = "";
-    $("#location").value = "";
-    $("#preferences").value = "";
-    $("#target_language").value = "English";
-    $("#ack").checked = false;
-    caseInput.setAttribute("aria-invalid", "false");
-    caseError.textContent = "";
-    sessionStorage.removeItem("cs-form");
-    caseInput.focus();
-  });
-
-  $("#cancel-btn").addEventListener("click", async () => {
-    if (state.sid) {
-      try { await fetch(`/api/board/${state.sid}`, { method: "DELETE" }); } catch (e) {}
-    }
-    if (state.source) { state.source.close(); state.source = null; }
-    resetState();
-    showView("form");
-  });
-
-  $("#restart-btn").addEventListener("click", () => {
-    resetState();
-    showView("form");
-  });
-
-  $("#print-btn").addEventListener("click", () => window.print());
-
-  $("#copy-btn").addEventListener("click", async () => {
-    const md = state.translatedMarkdown || state.englishMarkdown || "";
-    const refs = state.references.map(r =>
-      `[${r.label}] ${r.title || ""} — ${r.journal || ""} ${r.url ? "(" + r.url + ")" : ""}`
-    ).join("\n");
-    const header = "This contains information about my cancer situation. Please share carefully.\n\n";
-    const footer = "\n\n---\nSources:\n" + refs + "\n\nThis is not medical advice. Talk to your oncology team.";
-    const text = header + md + footer;
-    try {
-      await navigator.clipboard.writeText(text);
-      const btn = $("#copy-btn");
-      const orig = btn.textContent;
-      btn.textContent = "Copied!";
-      setTimeout(() => { btn.textContent = orig; }, 1800);
+      return JSON.parse(localStorage.getItem(PROFILE_KEY) || "{}") || {};
     } catch (e) {
-      alert("Could not copy. You can select the text and copy it manually.");
+      return {};
     }
+  }
+
+  function readProfileForm() {
+    return {
+      condition: $("#p-condition").value.trim(),
+      location: $("#p-location").value.trim(),
+      language: $("#p-language").value.trim() || "English",
+      preferences: $("#p-preferences").value.trim(),
+      age: $("#p-age").value.trim(),
+    };
+  }
+
+  function writeProfileForm(p) {
+    $("#p-condition").value = p.condition || "";
+    $("#p-location").value = p.location || "";
+    $("#p-language").value = p.language || "English";
+    $("#p-preferences").value = p.preferences || "";
+    $("#p-age").value = p.age || "";
+  }
+
+  function saveProfile(p) {
+    try {
+      localStorage.setItem(PROFILE_KEY, JSON.stringify(p));
+    } catch (e) { /* private browsing — the profile just won't persist */ }
+    renderProfileSummary(p);
+  }
+
+  function renderProfileSummary(p) {
+    const bits = [];
+    if (p.condition) bits.push(p.condition);
+    if (p.location) bits.push(p.location);
+    if (p.language && p.language.toLowerCase() !== "english") bits.push("in " + p.language);
+    $("#profile-summary").textContent = bits.length
+      ? bits.join(" · ")
+      : "Optional — helps us give answers you can actually use";
+  }
+
+  const profile = loadProfile();
+  writeProfileForm(profile);
+  renderProfileSummary(profile);
+
+  $("#profile-toggle").addEventListener("click", () => {
+    const body = $("#profile-body");
+    const open = body.hidden;
+    body.hidden = !open;
+    $("#profile-toggle").setAttribute("aria-expanded", String(open));
+    $("#profile-toggle").classList.toggle("is-open", open);
   });
 
-  function resetState() {
-    state.sid = null;
-    state.source = null;
-    state.roster = [];
-    state.agentStatus.clear();
-    state.agentDetail.clear();
-    state.phase = null;
-    state.englishMarkdown = "";
-    state.translatedMarkdown = "";
-    state.references = [];
-    $("#agent-stack").innerHTML = "";
-    $("#phase-line").textContent = "";
-    $("#result-markdown").innerHTML = "";
-    $("#references-list").innerHTML = "";
-  }
+  $("#profile-save").addEventListener("click", () => {
+    saveProfile(readProfileForm());
+    $("#profile-body").hidden = true;
+    $("#profile-toggle").setAttribute("aria-expanded", "false");
+    $("#profile-toggle").classList.remove("is-open");
+    $("#message").focus();
+  });
 
-  // --- SSE handling ---------------------------------------------------------
-  function startStream() {
-    const es = new EventSource(`/api/board/${state.sid}/stream`);
-    state.source = es;
+  $("#profile-clear").addEventListener("click", () => {
+    writeProfileForm({ language: "English" });
+    saveProfile(readProfileForm());
+    try { localStorage.removeItem(CONV_KEY); } catch (e) {}
+    state.conversationId = null;
+  });
 
-    es.addEventListener("message", (ev) => {
-      let data;
-      try { data = JSON.parse(ev.data); } catch (e) { return; }
-      handleEvent(data);
-    });
-
-    es.addEventListener("error", () => {
-      // Don't surface every reconnect; only if it stays down.
-      $("#phase-line").textContent = "Reconnecting...";
-    });
-  }
-
-  function handleEvent(ev) {
-    const type = ev.type;
-    const payload = ev.payload || {};
-    switch (type) {
-      case "board_started":      onBoardStarted(payload); break;
-      case "specialist_event":   onSpecialistEvent(payload); break;
-      case "specialist_round_complete": onSpecialistComplete(payload); break;
-      case "phase":              onPhase(payload); break;
-      case "synthesis_complete": onSynthesisComplete(payload); break;
-      case "timing_summary":     break; // logged for diagnostics only
-      case "final":              onFinal(payload); break;
-      case "error":              onError(payload); break;
-      default:                   break;
-    }
-  }
-
-  function renderPlaceholderCards() {
-    const stack = $("#agent-stack");
-    stack.innerHTML = "";
-    PLACEHOLDER_ROSTER_IDS.forEach((id) => {
-      const v = AGENT_VISUALS[id];
-      const placeholder = {
-        id,
-        display_name: v.label,
-        color: v.color,
-        conditional: id === "slp",
-      };
-      state.agentStatus.set(id, id === "translator" ? "waiting" : "working");
-      state.agentDetail.set(id, {
-        status: id === "translator" ? "waiting" : "working",
-        sourceCount: 0,
+  // --------------------------------------------------------------- team strip
+  (async function loadTeam() {
+    try {
+      const r = await fetch("/api/team");
+      if (!r.ok) return;
+      const data = await r.json();
+      const strip = $("#team-strip");
+      (data.specialists || []).forEach((s) => {
+        const v = PG.visualsFor(s.id, s.display_name);
+        const chip = document.createElement("span");
+        chip.className = "team-chip";
+        chip.innerHTML = `
+          <span class="team-dot" style="background:${PG.escapeAttr(s.color || v.color)}">${PG.escapeHtml(v.initials)}</span>
+          <span>${PG.escapeHtml(s.display_name)}</span>`;
+        chip.title = v.verb;
+        strip.appendChild(chip);
       });
-      stack.appendChild(makeAgentCard(placeholder));
+    } catch (e) { /* the strip is decorative */ }
+  })();
+
+  // --------------------------------------------------------------- transcript
+  const transcript = $("#transcript");
+
+  function dismissIntro() {
+    const intro = $("#intro");
+    if (intro) intro.remove();
+  }
+
+  function scrollToBottom(smooth) {
+    window.scrollTo({
+      top: document.body.scrollHeight,
+      behavior: smooth ? "smooth" : "auto",
     });
   }
 
-  function onBoardStarted(p) {
-    state.roster = p.specialists || [];
-    const stack = $("#agent-stack");
-    const presentIds = new Set(state.roster.map((s) => s.id));
-
-    // If a placeholder card was created for an agent that the backend isn't
-    // actually running (e.g., SLP pre-filtered out because the case doesn't
-    // involve head/neck or brain), drop it cleanly. Otherwise, just refresh
-    // the display_name/color from the authoritative roster.
-    PLACEHOLDER_ROSTER_IDS.forEach((id) => {
-      const card = $(`.agent-card[data-agent="${id}"]`);
-      if (!card) return;
-      if (!presentIds.has(id)) {
-        card.remove();
-        state.agentStatus.delete(id);
-        state.agentDetail.delete(id);
-      }
-    });
-    // For agents in the roster that didn't have a placeholder yet, add them.
-    state.roster.forEach((s) => {
-      if (!$(`.agent-card[data-agent="${s.id}"]`)) {
-        state.agentStatus.set(s.id, s.id === "translator" ? "waiting" : "working");
-        state.agentDetail.set(s.id, { status: s.id === "translator" ? "waiting" : "working", sourceCount: 0 });
-        stack.appendChild(makeAgentCard(s));
-      }
-    });
-
-    if (p.target_language && p.target_language.toLowerCase() !== "english") {
-      $("#phase-line").textContent = `Helpers researching · will translate to ${escapeHtml(p.target_language)} at the end.`;
-    } else {
-      $("#phase-line").textContent = "Helpers researching...";
-    }
+  function addUserMessage(text) {
+    const el = document.createElement("article");
+    el.className = "msg msg-user";
+    el.innerHTML = `<div class="msg-bubble"></div>`;
+    el.querySelector(".msg-bubble").textContent = text;
+    transcript.appendChild(el);
+    return el;
   }
 
-  function makeAgentCard(s) {
-    const visuals = AGENT_VISUALS[s.id] || { initials: s.id[0].toUpperCase(), label: s.display_name, verb: "..." };
-    const card = document.createElement("div");
-    card.className = "agent-card is-waiting";
-    card.setAttribute("role", "listitem");
-    card.setAttribute("data-agent", s.id);
-    card.innerHTML = `
-      <div class="agent-avatar" style="background:${escapeHtml(s.color || '#4A7C6F')}">
-        ${escapeHtml(visuals.initials)}
+  function addAssistantShell() {
+    const el = document.createElement("article");
+    el.className = "msg msg-assistant is-working";
+    el.innerHTML = `
+      <div class="msg-meta">
+        <span class="msg-status" aria-live="polite">Working out who should answer this…</span>
       </div>
-      <div class="agent-body">
-        <div class="agent-name">${escapeHtml(s.display_name || visuals.label)}</div>
-        <div class="agent-status" aria-live="polite">${escapeHtml(s.id === 'translator' ? 'Waiting for the others to finish' : 'Starting...')}</div>
-        <div class="agent-sources" hidden></div>
+      <div class="msg-agents" hidden></div>
+      <div class="msg-body"></div>
+      <div class="msg-sources" hidden>
+        <button type="button" class="sources-toggle" aria-expanded="false">Sources used <span class="sources-count"></span></button>
+        <ul class="references-list" hidden></ul>
       </div>
-      <div class="agent-icon" aria-hidden="true">○</div>
+      <div class="msg-actions" hidden>
+        <button type="button" class="btn btn-ghost btn-small act-copy">Copy</button>
+        <button type="button" class="btn btn-ghost btn-small act-print">Print / PDF</button>
+      </div>
     `;
-    return card;
+    transcript.appendChild(el);
+    return el;
   }
 
-  function findCard(id) {
-    return $(`.agent-card[data-agent="${id}"]`);
-  }
-
-  function setStatus(id, text) {
-    const card = findCard(id);
-    if (!card) return;
-    const el = card.querySelector(".agent-status");
+  function setTurnStatus(text) {
+    if (!state.currentTurnEl) return;
+    const el = state.currentTurnEl.querySelector(".msg-status");
     if (el) el.textContent = text;
   }
 
-  function setSources(id, n) {
-    const card = findCard(id);
-    if (!card) return;
-    const el = card.querySelector(".agent-sources");
-    if (!el) return;
-    if (n > 0) {
-      el.hidden = false;
-      el.textContent = `${n} source${n === 1 ? "" : "s"} found`;
-    } else {
-      el.hidden = true;
-    }
+  // ------------------------------------------------------------- agent cards
+  function renderAgentCards(specialists) {
+    const wrap = state.currentTurnEl.querySelector(".msg-agents");
+    wrap.hidden = false;
+    wrap.innerHTML = "";
+    state.agentCards.clear();
+    specialists.forEach((s) => {
+      const v = PG.visualsFor(s.id, s.display_name);
+      const card = document.createElement("div");
+      card.className = "agent-chip is-waiting";
+      card.dataset.agent = s.id;
+      card.innerHTML = `
+        <span class="agent-dot" style="background:${PG.escapeAttr(s.color || v.color)}">${PG.escapeHtml(v.initials)}</span>
+        <span class="agent-chip-body">
+          <span class="agent-chip-name">${PG.escapeHtml(s.display_name || v.label)}</span>
+          <span class="agent-chip-status">${PG.escapeHtml(v.verb)}</span>
+        </span>
+        <span class="agent-chip-icon" aria-hidden="true">○</span>
+      `;
+      if (s.focus) card.title = s.focus;
+      wrap.appendChild(card);
+      state.agentCards.set(s.id, card);
+    });
   }
 
-  function setCardState(id, klass, iconChar) {
-    const card = findCard(id);
+  function setAgentStatus(id, text) {
+    const card = state.agentCards.get(id);
+    if (!card) return;
+    const el = card.querySelector(".agent-chip-status");
+    if (el) el.textContent = text;
+  }
+
+  function setAgentState(id, klass, icon) {
+    const card = state.agentCards.get(id);
     if (!card) return;
     card.classList.remove("is-waiting", "is-done", "is-skipped", "is-error");
     if (klass) card.classList.add(klass);
-    const ic = card.querySelector(".agent-icon");
-    if (ic) ic.textContent = iconChar;
+    const ic = card.querySelector(".agent-chip-icon");
+    if (ic) ic.textContent = icon;
+  }
+
+  // ------------------------------------------------------------------ sending
+  async function send(text) {
+    if (state.busy) return;
+    const message = (text || "").trim();
+    if (message.length < 2) return;
+
+    dismissIntro();
+    state.busy = true;
+    $("#send-btn").disabled = true;
+    $("#stop-btn").hidden = false;
+
+    const currentProfile = readProfileForm();
+    saveProfile(currentProfile);
+
+    addUserMessage(message);
+    state.currentTurnEl = addAssistantShell();
+    scrollToBottom(true);
+
+    let payload;
+    try {
+      const r = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          message,
+          conversation_id: state.conversationId,
+          profile: currentProfile,
+        }),
+      });
+      if (r.status === 404 && state.conversationId) {
+        // The conversation expired server-side. Retry once as a fresh one so the
+        // patient doesn't lose the question they just typed.
+        state.conversationId = null;
+        try { sessionStorage.removeItem(CONV_KEY); } catch (e) {}
+        const retry = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message, conversation_id: null, profile: currentProfile }),
+        });
+        if (!retry.ok) throw new Error((await retry.json().catch(() => ({}))).detail || `Server returned ${retry.status}`);
+        payload = await retry.json();
+      } else if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.detail || `Server returned ${r.status}`);
+      } else {
+        payload = await r.json();
+      }
+    } catch (err) {
+      failTurn(err.message || String(err));
+      return;
+    }
+
+    state.conversationId = payload.conversation_id;
+    state.turnId = payload.turn_id;
+    try { sessionStorage.setItem(CONV_KEY, state.conversationId); } catch (e) {}
+
+    startStream();
+  }
+
+  function failTurn(msg) {
+    if (state.currentTurnEl) {
+      state.currentTurnEl.classList.remove("is-working");
+      state.currentTurnEl.classList.add("is-error");
+      setTurnStatus("Something went wrong");
+      const body = state.currentTurnEl.querySelector(".msg-body");
+      body.innerHTML = "";
+      const p = document.createElement("p");
+      p.textContent =
+        "Sorry — that didn't work: " + msg + ". Your question is still in the box below if you'd like to try again.";
+      body.appendChild(p);
+    }
+    finishTurn();
+  }
+
+  function finishTurn() {
+    state.busy = false;
+    $("#send-btn").disabled = false;
+    $("#stop-btn").hidden = true;
+    if (state.source) {
+      state.source.close();
+      state.source = null;
+    }
+    state.currentTurnEl = null;
+    state.agentCards.clear();
+  }
+
+  function startStream() {
+    const url = `/api/chat/${encodeURIComponent(state.conversationId)}/turns/${encodeURIComponent(state.turnId)}/stream`;
+    const es = new EventSource(url);
+    state.source = es;
+    es.addEventListener("message", (ev) => {
+      let data;
+      try {
+        data = JSON.parse(ev.data);
+      } catch (e) {
+        return;
+      }
+      handleEvent(data);
+    });
+    es.addEventListener("error", () => {
+      // EventSource reconnects on its own, and the turn's event log is
+      // replayable from index 0, so a blip recovers without losing anything.
+      if (state.busy) setTurnStatus("Reconnecting…");
+    });
+  }
+
+  $("#stop-btn").addEventListener("click", async () => {
+    if (state.conversationId && state.turnId) {
+      try {
+        await fetch(`/api/chat/${state.conversationId}/turns/${state.turnId}`, { method: "DELETE" });
+      } catch (e) {}
+    }
+    setTurnStatus("Stopped");
+    if (state.currentTurnEl) state.currentTurnEl.classList.remove("is-working");
+    finishTurn();
+  });
+
+  // ------------------------------------------------------------------- events
+  const PHASE_TEXT = {
+    triaging: "Working out who should answer this…",
+    synthesizing: "Putting it together into one answer…",
+    naming_sources: "Checking every source is named clearly…",
+    simplifying: "Rewriting it in plain language…",
+    translating: "Translating…",
+    lay_summarizing: "Summarizing the sources…",
+  };
+
+  function handleEvent(ev) {
+    const p = ev.payload || {};
+    switch (ev.type) {
+      case "turn_started":
+        break;
+
+      case "red_flag":
+        showRedFlagPreview(p);
+        break;
+
+      case "routed":
+        onRouted(p);
+        break;
+
+      case "phase":
+        if (PHASE_TEXT[p.phase]) setTurnStatus(PHASE_TEXT[p.phase]);
+        if (p.phase === "translating" && p.target_language) {
+          setTurnStatus(`Translating to ${p.target_language}…`);
+        }
+        break;
+
+      case "fallback":
+        setTurnStatus("That helper had nothing solid — asking our researcher instead…");
+        setAgentState(p.from, "is-skipped", "–");
+        setAgentStatus(p.from, "sat this one out");
+        break;
+
+      case "specialist_event":
+        onSpecialistEvent(p);
+        break;
+
+      case "specialist_round_complete":
+        onSpecialistComplete(p);
+        break;
+
+      case "turn_complete":
+        onTurnComplete(p);
+        break;
+
+      case "error":
+        failTurn(p.message || "unknown error");
+        break;
+
+      default:
+        break;
+    }
+  }
+
+  function showRedFlagPreview(p) {
+    if (!state.currentTurnEl) return;
+    if (state.currentTurnEl.querySelector(".redflag-preview")) return;
+    const div = document.createElement("div");
+    div.className = "redflag-preview";
+    div.setAttribute("role", "alert");
+    div.innerHTML =
+      p.kind === "crisis"
+        ? `<strong>⚠️ Please reach out for help right now.</strong> If you're thinking about hurting yourself:
+           call or text <strong>988</strong> in the US, <strong>116 123</strong> (Samaritans) in the UK,
+           <strong>13 11 14</strong> (Lifeline) in Australia, or find a local line at
+           <a href="https://findahelpline.com" target="_blank" rel="noopener noreferrer">findahelpline.com</a>.`
+        : `<strong>⚠️ What you described may need urgent care.</strong> Please contact emergency services
+           or your care team's urgent line now — don't wait for this answer.`;
+    state.currentTurnEl.querySelector(".msg-meta").after(div);
+    scrollToBottom(true);
+  }
+
+  function onRouted(p) {
+    const specialists = p.specialists || [];
+    if (p.mode === "clarify") {
+      setTurnStatus("One quick question first…");
+      return;
+    }
+    if (specialists.length) {
+      renderAgentCards(specialists);
+      const names = specialists.map((s) => s.display_name).join(", ");
+      setTurnStatus(
+        specialists.length === 1
+          ? `Asking our ${names}…`
+          : `Bringing in ${specialists.length} helpers: ${names}…`
+      );
+    }
+    if (p.degraded) {
+      setTurnStatus("Answering with our medical researcher…");
+    }
+    scrollToBottom(true);
   }
 
   function onSpecialistEvent(p) {
     const id = p.specialist;
-    if (!id) return;
-    const card = findCard(id);
+    const card = state.agentCards.get(id);
     if (!card) return;
     card.classList.remove("is-waiting");
-
-    const type = p.type;
-    const detail = state.agentDetail.get(id) || {};
-
-    if (type === "tool_result") {
-      detail.sourceCount = (detail.sourceCount || 0) + 1;
-      state.agentDetail.set(id, detail);
-      setSources(id, detail.sourceCount);
-      setStatus(id, "reading sources...");
-    } else if (ACTIVITY_VERBS[type]) {
-      setStatus(id, ACTIVITY_VERBS[type]);
+    if (p.type === "tool_result") {
+      const n = (Number(card.dataset.sources || 0) || 0) + 1;
+      card.dataset.sources = String(n);
+      setAgentStatus(id, `read ${n} source${n === 1 ? "" : "s"}`);
+    } else if (PG.ACTIVITY_VERBS[p.type]) {
+      setAgentStatus(id, PG.ACTIVITY_VERBS[p.type]);
     }
   }
 
   function onSpecialistComplete(p) {
     const id = p.specialist;
-    const status = p.status;
-    state.agentStatus.set(id, status);
-    const detail = state.agentDetail.get(id) || {};
-    detail.status = status;
-    detail.summary = p.recommendation_summary || "";
-    detail.draft = p.draft_markdown || "";
-    detail.labels = p.evidence_labels || [];
-    detail.error = p.error || "";
-    state.agentDetail.set(id, detail);
-
-    if (status === "skipped") {
-      setCardState(id, "is-skipped", "–");
-      setStatus(id, "Not relevant to your situation — sat this out");
-      setSources(id, 0);
-    } else if (status === "error") {
-      setCardState(id, "is-error", "!");
-      setStatus(id, p.error ? "Something went wrong" : "Error");
-    } else if (status === "no_evidence") {
-      setCardState(id, "is-error", "!");
-      setStatus(id, "Couldn't find trustworthy sources for this");
+    const n = (p.evidence_labels || []).length;
+    if (p.status === "done") {
+      setAgentState(id, "is-done", "✓");
+      setAgentStatus(id, n ? `done · ${n} source${n === 1 ? "" : "s"}` : "done");
+    } else if (p.status === "skipped") {
+      setAgentState(id, "is-skipped", "–");
+      setAgentStatus(id, "not relevant here");
+    } else if (p.status === "no_evidence") {
+      setAgentState(id, "is-error", "!");
+      setAgentStatus(id, "couldn't find solid sources");
     } else {
-      // done
-      setCardState(id, "is-done", "✓");
-      const n = (detail.labels || []).length;
-      if (n) setStatus(id, `Done — used ${n} source${n === 1 ? "" : "s"}`);
-      else setStatus(id, "Done");
+      setAgentState(id, "is-error", "!");
+      setAgentStatus(id, "hit a problem");
     }
   }
 
-  function onPhase(p) {
-    const phase = p.phase;
-    state.phase = phase;
-    if (phase === "synthesizing") {
-      $("#phase-line").textContent = "Putting it all together into one summary...";
-    } else if (phase === "translating") {
-      const lang = p.target_language || state.targetLanguage;
-      if (lang && lang.toLowerCase() !== "english") {
-        $("#phase-line").textContent = `Translating to ${escapeHtml(lang)}...`;
-        // Update translator card if present
-        const card = findCard("translator");
-        if (card) {
-          card.classList.remove("is-waiting");
-          setStatus("translator", `Translating to ${lang}...`);
-        }
-      } else {
-        $("#phase-line").textContent = "Almost done...";
-      }
-    }
-  }
-
-  function onSynthesisComplete(p) {
-    state.englishMarkdown = p.english_markdown || "";
-  }
-
-  function onFinal(p) {
-    state.englishMarkdown = p.english_markdown || state.englishMarkdown;
-    state.translatedMarkdown = p.translated_markdown || state.englishMarkdown;
-    state.references = p.references || [];
-
-    // Mark translator card as done if it was actually used
-    const lang = (p.target_language || "").toLowerCase();
-    const card = findCard("translator");
-    if (card) {
-      if (lang && lang !== "english") {
-        setCardState("translator", "is-done", "✓");
-        setStatus("translator", `Translated to ${p.target_language}`);
-      } else {
-        setCardState("translator", "is-skipped", "–");
-        setStatus("translator", "Not needed — your summary is in English");
-      }
-    }
-
-    if (state.source) { state.source.close(); state.source = null; }
-    renderResult(p);
-    showView("result");
-  }
-
-  function onError(p) {
-    $("#phase-line").textContent = "";
-    const msg = p.message || "Something went wrong.";
-    alert(`We had a problem: ${msg}`);
-    if (state.source) { state.source.close(); state.source = null; }
-    showView("form");
-  }
-
-  // --- Result rendering ----------------------------------------------------
-  function renderResult(p) {
-    const targetLang = p.target_language || state.targetLanguage || "English";
-    const refCount = (p.references || []).length;
-    const activeCount = Array.from(state.agentStatus.values())
-      .filter((s) => s === "done").length;
-
-    $("#result-sub").textContent =
-      `${activeCount} helper${activeCount === 1 ? "" : "s"} weighed in · ${refCount} source${refCount === 1 ? "" : "s"} · in ${targetLang}`;
-
-    const md = state.translatedMarkdown || state.englishMarkdown || "*Your summary is empty.*";
-    renderMarkdown($("#result-markdown"), md);
-
-    // Build a label → reference map for the inline citation hover tooltip.
-    state.refsByLabel = new Map(
-      (p.references || []).map((ref) => [String(ref.label), ref])
-    );
-
-    const refsList = $("#references-list");
-    refsList.innerHTML = "";
-    (p.references || []).forEach((ref) => {
-      const li = document.createElement("li");
-      li.id = `ref-${escapeAttr(String(ref.label || ""))}`;
-      const kind = (ref.source_kind || "other").replace(/[^a-z_]/gi, "");
-      li.classList.add(`ref-kind-${kind}`);
-      const kindBadge = (() => {
-        if (kind === "patient_story") return `<span class="ref-badge ref-badge-story">Story</span>`;
-        if (kind === "resource_directory") return `<span class="ref-badge ref-badge-resource">Resource</span>`;
-        if (kind === "patient_source") return `<span class="ref-badge ref-badge-source">Patient info</span>`;
-        return "";
-      })();
-      const meta = [];
-      if (ref.journal) meta.push(escapeHtml(ref.journal));
-      if (ref.year) meta.push(escapeHtml(String(ref.year)));
-      if (ref.article_type) meta.push(escapeHtml(ref.article_type));
-      const urlHtml = ref.url
-        ? `<a href="${escapeAttr(ref.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ref.url)}</a>`
-        : "";
-      const lay = (ref.lay_summary || "").trim();
-      const layHtml = lay
-        ? `<div class="ref-lay"><span class="ref-lay-label">In plain English:</span> ${escapeHtml(lay)}</div>`
-        : "";
-      li.innerHTML = `
-        <div>
-          ${kindBadge}
-          <span class="ref-label">[${escapeHtml(ref.label || "")}]</span>
-          <span class="ref-title">${escapeHtml(ref.title || "(no title)")}</span>
-        </div>
-        <div class="ref-meta">${meta.join(" · ")}${meta.length && urlHtml ? " · " : ""}${urlHtml}</div>
-        ${layHtml}
-      `;
-      refsList.appendChild(li);
-    });
-  }
-
-  // --- Markdown rendering ---------------------------------------------------
-  function renderMarkdown(target, md) {
-    if (!window.marked || !window.DOMPurify) {
-      target.textContent = md;
+  function onTurnComplete(p) {
+    const el = state.currentTurnEl;
+    if (!el) {
+      finishTurn();
       return;
     }
-    marked.setOptions({ breaks: true, gfm: true });
-    let html = marked.parse(md);
-    html = transformCitations(html);
-    target.innerHTML = DOMPurify.sanitize(html, {
-      ADD_ATTR: ["target", "rel"],
+
+    // Merge this turn's references into the conversation-wide map so citation
+    // hovers keep working in older messages too.
+    (p.all_references || p.references || []).forEach((ref) => {
+      state.refsByLabel.set(String(ref.label), ref);
     });
-  }
 
-  function transformCitations(html) {
-    // Replace [N] / [N, M] / [N-M] outside of <a> tags with citation chips.
-    // Keep it simple: regex on the rendered HTML, skipping anchor contents.
-    return html.replace(/\[(\d{1,3}(?:\s*[-–,;]\s*\d{1,3})*)\]/g, (match, group) => {
-      // group like "1" or "1, 2" or "1-3"
-      const nums = (group.match(/\d+/g) || []).map(Number);
-      let labels = [];
-      if (nums.length === 2 && /[-–]/.test(group)) {
-        const [lo, hi] = nums;
-        if (hi >= lo && hi - lo < 50) {
-          labels = Array.from({ length: hi - lo + 1 }, (_, i) => lo + i);
-        } else {
-          labels = nums;
-        }
-      } else {
-        labels = nums;
-      }
-      return labels.map((n) =>
-        `<a class="cite" href="#ref-${n}" data-cite-label="${n}" tabindex="0">[${n}]</a>`
-      ).join(" ");
-    });
-  }
+    el.classList.remove("is-working");
+    const md = p.markdown || p.english_markdown || "*No answer was produced.*";
+    PG.renderMarkdown(el.querySelector(".msg-body"), md, { idPrefix: "ref-" });
 
-  // --- Hover/focus tooltip for inline [N] citations -------------------------
-  // Single tooltip element reused across all hovers. Populated from
-  // state.refsByLabel (built in renderResult).
-  let citeTooltipEl = null;
-  function ensureCiteTooltip() {
-    if (citeTooltipEl) return citeTooltipEl;
-    const el = document.createElement("div");
-    el.className = "cite-tooltip";
-    el.setAttribute("role", "tooltip");
-    el.hidden = true;
-    document.body.appendChild(el);
-    citeTooltipEl = el;
-    return el;
-  }
+    // Status line: what actually happened, in the patient's terms.
+    const used = (p.route && p.route.specialists) || [];
+    const secs = (p.timing && p.timing.total_s) || 0;
+    if (p.mode === "clarify") {
+      setTurnStatus("Just need one detail");
+    } else if (used.length) {
+      const names = used.map((s) => s.display_name).join(" · ");
+      setTurnStatus(`${names} · ${(p.references || []).length} source${(p.references || []).length === 1 ? "" : "s"} · ${secs}s`);
+    } else {
+      setTurnStatus(`${secs}s`);
+    }
 
-  function kindBadgeFor(kind) {
-    if (kind === "patient_story") return `<span class="ref-badge ref-badge-story">Story</span>`;
-    if (kind === "resource_directory") return `<span class="ref-badge ref-badge-resource">Resource</span>`;
-    if (kind === "patient_source") return `<span class="ref-badge ref-badge-source">Patient info</span>`;
-    return "";
-  }
-
-  function showCiteTooltip(anchor, ref) {
-    const tt = ensureCiteTooltip();
-    const meta = [ref.journal, ref.year, ref.article_type]
-      .filter(Boolean)
-      .map((v) => escapeHtml(String(v)))
-      .join(" · ");
-    const urlBit = ref.url
-      ? `<a href="${escapeAttr(ref.url)}" target="_blank" rel="noopener noreferrer">Open source ↗</a>`
-      : "";
-    const lay = (ref.lay_summary || "").trim();
-    const layBlock = lay
-      ? `<div class="cite-tooltip-lay">${escapeHtml(lay)}</div>`
-      : `<div class="cite-tooltip-lay cite-tooltip-lay-loading">Writing a plain-English summary…</div>`;
-    tt.innerHTML = `
-      <div class="cite-tooltip-head">
-        ${kindBadgeFor(ref.source_kind || "")}
-        <span class="cite-tooltip-label">[${escapeHtml(String(ref.label || ""))}]</span>
-        <span class="cite-tooltip-title">${escapeHtml(ref.title || "(no title)")}</span>
-      </div>
-      <div class="cite-tooltip-meta">${meta}${meta && urlBit ? " · " : ""}${urlBit}</div>
-      <div class="cite-tooltip-laylabel">In plain English:</div>
-      ${layBlock}
-    `;
-    tt.hidden = false;
-    positionCiteTooltip(anchor, tt);
-
-    // If we don't have a lay summary yet, fetch it lazily and update the tooltip
-    // (and the references panel card) when it arrives.
-    if (!lay && ref.label && state.sid) {
-      fetchLaySummary(ref.label).then((text) => {
-        if (!text) return;
-        ref.lay_summary = text;
-        // If the tooltip is still showing THIS ref, update it in place
-        if (!tt.hidden) {
-          const layEl = tt.querySelector(".cite-tooltip-lay");
-          if (layEl) {
-            layEl.classList.remove("cite-tooltip-lay-loading");
-            layEl.textContent = text;
-          }
-        }
-        // Also refresh the matching reference panel card so it shows the summary
-        const refCard = document.getElementById(`ref-${ref.label}`);
-        if (refCard && !refCard.querySelector(".ref-lay")) {
-          const layDiv = document.createElement("div");
-          layDiv.className = "ref-lay";
-          layDiv.innerHTML =
-            `<span class="ref-lay-label">In plain English:</span> ${escapeHtml(text)}`;
-          refCard.appendChild(layDiv);
-        }
+    // Per-message source list.
+    const refs = p.references || [];
+    if (refs.length) {
+      const wrap = el.querySelector(".msg-sources");
+      const list = wrap.querySelector(".references-list");
+      wrap.hidden = false;
+      wrap.querySelector(".sources-count").textContent = `(${refs.length})`;
+      list.innerHTML = "";
+      refs.forEach((ref) => list.appendChild(PG.referenceListItem(ref, "ref-")));
+      const toggle = wrap.querySelector(".sources-toggle");
+      toggle.addEventListener("click", () => {
+        const open = list.hidden;
+        list.hidden = !open;
+        toggle.setAttribute("aria-expanded", String(open));
       });
     }
+
+    if (p.mode !== "clarify") {
+      const actions = el.querySelector(".msg-actions");
+      actions.hidden = false;
+      actions.querySelector(".act-copy").addEventListener("click", async () => {
+        const refText = refs
+          .map((r) => `[${r.label}] ${r.title || ""} — ${r.journal || ""} ${r.url ? "(" + r.url + ")" : ""}`)
+          .join("\n");
+        const text =
+          md +
+          (refText ? "\n\n---\nSources:\n" + refText : "") +
+          "\n\nThis is general information from public sources. It is not medical advice — please talk to your care team.";
+        try {
+          await navigator.clipboard.writeText(text);
+          const b = actions.querySelector(".act-copy");
+          const orig = b.textContent;
+          b.textContent = "Copied!";
+          setTimeout(() => { b.textContent = orig; }, 1600);
+        } catch (e) {
+          alert("Could not copy. You can select the text and copy it manually.");
+        }
+      });
+      actions.querySelector(".act-print").addEventListener("click", () => {
+        // Print the answer AND the question that produced it. The whole point of
+        // this button is handing the page to a clinician, and an answer with no
+        // question on it is a page they cannot place.
+        const question = el.previousElementSibling;
+        const asked = question && question.classList.contains("msg-user") ? question : null;
+        el.classList.add("print-target");
+        if (asked) asked.classList.add("print-target");
+        document.body.classList.add("printing-one");
+        window.print();
+        setTimeout(() => {
+          el.classList.remove("print-target");
+          if (asked) asked.classList.remove("print-target");
+          document.body.classList.remove("printing-one");
+        }, 500);
+      });
+    }
+
+    finishTurn();
+    scrollToBottom(true);
   }
 
-  // In-flight fetches keyed by label so two quick hovers don't duplicate work.
-  const _laySummaryInflight = new Map();
-  async function fetchLaySummary(label) {
-    if (_laySummaryInflight.has(label)) return _laySummaryInflight.get(label);
-    const p = (async () => {
+  // ---------------------------------------------------------------- citations
+  PG.configureCitations({
+    idPrefix: "ref-",
+    resolveRef: (label) => state.refsByLabel.get(String(label)) || null,
+    fetchLay: async (label) => {
+      if (!state.conversationId) return "";
       try {
-        const r = await fetch(`/api/board/${encodeURIComponent(state.sid)}/lay_summary/${encodeURIComponent(label)}`);
+        const r = await fetch(
+          `/api/chat/${encodeURIComponent(state.conversationId)}/lay_summary/${encodeURIComponent(label)}`
+        );
         if (!r.ok) return "";
         const data = await r.json();
         return (data && data.lay_summary) || "";
       } catch (e) {
         return "";
-      } finally {
-        _laySummaryInflight.delete(label);
       }
-    })();
-    _laySummaryInflight.set(label, p);
-    return p;
-  }
+    },
+  });
 
-  function hideCiteTooltip() {
-    if (citeTooltipEl) citeTooltipEl.hidden = true;
-  }
+  // ----------------------------------------------------------------- composer
+  const input = $("#message");
 
-  function positionCiteTooltip(anchor, tt) {
-    // Make sure layout is computed
-    tt.style.left = "0px";
-    tt.style.top = "-9999px";
-    const aRect = anchor.getBoundingClientRect();
-    const ttRect = tt.getBoundingClientRect();
-    const margin = 8;
-    let top = aRect.bottom + window.scrollY + margin;
-    let left = aRect.left + window.scrollX;
-    if (left + ttRect.width > window.scrollX + window.innerWidth - 12) {
-      left = window.scrollX + window.innerWidth - ttRect.width - 12;
+  function autoGrow() {
+    input.style.height = "auto";
+    input.style.height = Math.min(input.scrollHeight, 220) + "px";
+  }
+  input.addEventListener("input", autoGrow);
+
+  input.addEventListener("keydown", (e) => {
+    // Enter sends; Shift+Enter makes a new line. On touch keyboards Enter is
+    // usually a newline, so don't hijack it there.
+    const isTouch = window.matchMedia("(pointer: coarse)").matches;
+    if (e.key === "Enter" && !e.shiftKey && !isTouch) {
+      e.preventDefault();
+      $("#composer").requestSubmit();
     }
-    if (left < window.scrollX + 12) left = window.scrollX + 12;
-    // Flip above if no room below
-    if (
-      aRect.bottom + ttRect.height + margin > window.innerHeight &&
-      aRect.top - ttRect.height - margin > 0
-    ) {
-      top = aRect.top + window.scrollY - ttRect.height - margin;
-    }
-    tt.style.top = `${top}px`;
-    tt.style.left = `${left}px`;
-  }
-
-  // Delegated hover + focus handlers. Cite elements are inside #result-markdown.
-  document.addEventListener("mouseover", (e) => {
-    const cite = e.target.closest && e.target.closest(".cite");
-    if (!cite) return;
-    const label = cite.dataset.citeLabel;
-    const ref = state.refsByLabel && state.refsByLabel.get(label);
-    if (!ref) return;
-    showCiteTooltip(cite, ref);
-  });
-  document.addEventListener("mouseout", (e) => {
-    const cite = e.target.closest && e.target.closest(".cite");
-    if (!cite) return;
-    // Only hide if leaving to outside both the cite and the tooltip
-    const related = e.relatedTarget;
-    if (
-      related &&
-      (related === citeTooltipEl ||
-        (citeTooltipEl && citeTooltipEl.contains(related)))
-    ) {
-      return;
-    }
-    hideCiteTooltip();
-  });
-  document.addEventListener("focusin", (e) => {
-    if (!e.target.classList || !e.target.classList.contains("cite")) return;
-    const label = e.target.dataset.citeLabel;
-    const ref = state.refsByLabel && state.refsByLabel.get(label);
-    if (ref) showCiteTooltip(e.target, ref);
-  });
-  document.addEventListener("focusout", (e) => {
-    if (!e.target.classList || !e.target.classList.contains("cite")) return;
-    hideCiteTooltip();
-  });
-  // Dismiss on Escape for accessibility.
-  document.addEventListener("keydown", (e) => {
-    if (e.key === "Escape") hideCiteTooltip();
   });
 
-  // --- Tiny escape helpers --------------------------------------------------
-  function escapeHtml(s) {
-    return String(s == null ? "" : s)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;")
-      .replace(/'/g, "&#39;");
-  }
-  function escapeAttr(s) { return escapeHtml(s); }
+  $("#composer").addEventListener("submit", (e) => {
+    e.preventDefault();
+    const text = input.value;
+    if (state.busy || text.trim().length < 2) return;
+    input.value = "";
+    autoGrow();
+    send(text);
+  });
+
+  document.querySelectorAll(".starter").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      input.value = btn.dataset.fill || btn.textContent.trim();
+      autoGrow();
+      input.focus();
+    });
+  });
+
+  // Restore the conversation id (not the transcript) so a refresh mid-chat keeps
+  // citation labels stable on the server side.
+  try {
+    const saved = sessionStorage.getItem(CONV_KEY);
+    if (saved) state.conversationId = saved;
+  } catch (e) {}
+
+  input.focus();
 })();
