@@ -249,12 +249,74 @@ def cmd_iterate(args):
     print(json.dumps(verdict, indent=2))
 
 
+# --------------------------------------------------------------------------- #
+# Routing — scored from the case's `expect` block
+# --------------------------------------------------------------------------- #
+
+def score_routing(case: dict, route: dict) -> dict:
+    """Compare the router's choice against what the case says should happen.
+
+    Two failures matter and they are not symmetric:
+
+    * a MISS (an expected specialist never woke) means the patient's actual
+      question went unanswered — the dietitian question got no dietitian;
+    * a WRONG WAKE, specifically the SLP firing when swallowing/speech is not in
+      play, costs the patient 20-30s of waiting for a section that will say
+      nothing useful.
+
+    Agent count is reported as the cost proxy: the whole point of the router is
+    that a one-specialist question does not spin four.
+    """
+    expect = case.get("expect") or {}
+    want = set(expect.get("agents") or [])
+    got = {s["id"] for s in (route.get("specialists") or [])}
+
+    missed = sorted(want - got)
+    slp_expected = bool(expect.get("slp"))
+    slp_woke = "slp" in got
+    slp_ok = slp_woke == slp_expected
+
+    return {
+        "mode": route.get("mode"),
+        "expected": sorted(want),
+        "chosen": sorted(got),
+        "missed": missed,
+        "hit_all_expected": not missed,
+        "slp_ok": slp_ok,
+        "slp_expected": slp_expected,
+        "slp_woke": slp_woke,
+        "n_agents": len(got),
+        "routing_pass": (not missed) and slp_ok,
+    }
+
+
+async def _run_chat_case(case: dict):
+    """Run one case through the REAL chat path, so the router is in the loop."""
+    from app import chat, sessions
+
+    profile = {
+        "condition": "",
+        "location": case.get("location", ""),
+        "language": case.get("target_language", "English"),
+        "preferences": case.get("preferences", ""),
+        "age": "",
+    }
+    conv = sessions.new_conversation(profile)
+    turn = sessions.new_turn(conv, case["case"])
+    try:
+        return await chat.run_turn(conv, turn, case["case"], lambda t, p: None)
+    finally:
+        sessions.CONVERSATIONS.pop(conv.cid, None)
+
+
 def cmd_batch(args):
-    """Run a set of Reddit-derived cases through the REAL board, judge each final
-    answer, and write per-case answers + a summary report. Sequential (each board
-    already parallelizes its 5 specialists internally)."""
+    """Run every case end-to-end, judge each answer, and report.
+
+    `--path chat` (default) goes through the production chat path so the ROUTER
+    is exercised and can be scored. `--path consult` runs the un-routed
+    full-consult roster, which is what the older fixtures were captured against.
+    """
     import asyncio
-    from app import board
     from tests.eval.patient_cases import CASES
 
     wanted = set(p.strip() for p in args.ids.split(",")) if args.ids else None
@@ -262,21 +324,30 @@ def cmd_batch(args):
     if not cases:
         sys.exit(f"No matching cases. Available ids: {[c['id'] for c in CASES]}")
 
+    model = os.getenv("CANCERPATIENT_MODEL") or "(default)"
     results = []
     for i, c in enumerate(cases, 1):
-        print(f"\n[{i}/{len(cases)}] running case {c['id']} — {c['theme']}", file=sys.stderr)
+        print(f"\n[{i}/{len(cases)}] {c['id']} — {c['theme'][:60]}", file=sys.stderr)
 
-        def emit(t, p):
-            if t in ("synthesis_complete", "final"):
-                print(f"    [{t}]", file=sys.stderr)
-
+        routing = None
         try:
-            res = asyncio.run(board.run_board(
-                c["case"], c["location"], c["target_language"], emit,
-                preferences=c["preferences"],
-            ))
-            md = res["english_markdown"]
-            (RUNS / f"reddit_{c['id']}.md").write_text(md)
+            if args.path == "chat":
+                res = asyncio.run(_run_chat_case(c))
+                md = res.get("english_markdown") or res.get("markdown") or ""
+                routing = score_routing(c, res.get("route") or {})
+                secs = (res.get("timing") or {}).get("total_s")
+                print(f"    route: {routing['mode']} {routing['chosen']} "
+                      f"({secs}s){'' if routing['routing_pass'] else '  ROUTING FAIL'}",
+                      file=sys.stderr)
+            else:
+                from app import board
+                res = asyncio.run(board.run_board(
+                    c["case"], c["location"], c["target_language"],
+                    lambda t, p: None, preferences=c["preferences"],
+                ))
+                md = res["english_markdown"]
+
+            (RUNS / f"{c['id']}__{model.replace('/', '_')}.md").write_text(md)
             verdict = judge_markdown(md)
         except Exception as e:
             print(f"    ERROR: {e}", file=sys.stderr)
@@ -289,8 +360,8 @@ def cmd_batch(args):
 
         row = {
             "id": c["id"], "theme": c["theme"], "location": c["location"],
-            "model": os.getenv("CANCERPATIENT_MODEL") or "(default)",
-            "chars": len(md),
+            "model": model, "path": args.path, "chars": len(md),
+            "routing": routing,
             "A_institutions": crit("criterion_a_institutions"),
             "B_synthesis": crit("criterion_b_synthesis"),
             "C_specifics": crit("criterion_c_specifics"),
@@ -298,7 +369,6 @@ def cmd_batch(args):
             "E_no_fabrication": crit("criterion_e_no_fabrication"),
             "F_no_eligibility": crit("criterion_f_no_eligibility_promise"),
             "overall_pass": verdict["overall_pass"],
-            "A_violations": (verdict.get("criterion_a_institutions") or {}).get("violations", []),
             "D_violations": (verdict.get("criterion_d_specificity_gate") or {}).get("violations", []),
             "E_violations": (verdict.get("criterion_e_no_fabrication") or {}).get("violations", []),
             "F_violations": (verdict.get("criterion_f_no_eligibility_promise") or {}).get("violations", []),
@@ -310,24 +380,42 @@ def cmd_batch(args):
               f"C={row['C_specifics'][1]} D={row['D_specificity_gate'][1]} "
               f"E={row['E_no_fabrication'][1]} F={row['F_no_eligibility'][1]}", file=sys.stderr)
 
-    report = RUNS / "reddit_batch_report.json"
+    tag = model.replace("/", "_")
+    report = RUNS / f"batch_report__{tag}.json"
     report.write_text(json.dumps(results, indent=2))
-    # Compact table to stdout
-    print("\n=== BATCH REPORT ===")
-    passed = sum(1 for r in results if r.get("overall_pass"))
-    print(f"{passed}/{len(results)} overall PASS\n")
+
+    scored = [r for r in results if "error" not in r]
+    print(f"\n=== BATCH REPORT — model={model} path={args.path} ===")
+    passed = sum(1 for r in scored if r.get("overall_pass"))
+    print(f"{passed}/{len(scored)} answers pass every criterion\n")
+
     for r in results:
         if "error" in r:
-            print(f"  {r['id']:24} ERROR: {r['error'][:60]}")
+            print(f"  {r['id']:26} ERROR: {r['error'][:60]}")
             continue
         v = "PASS" if r["overall_pass"] else "FAIL"
-        print(f"  {r['id']:26} {v}  A={r['A_institutions'][1]} B={r['B_synthesis'][1]} "
-              f"C={r['C_specifics'][1]} D={r['D_specificity_gate'][1]} "
-              f"E={r['E_no_fabrication'][1]} F={r['F_no_eligibility'][1]}")
-        # Safety violations are the ones worth printing in full.
+        line = (f"  {r['id']:26} {v}  A={r['A_institutions'][1]} B={r['B_synthesis'][1]} "
+                f"C={r['C_specifics'][1]} D={r['D_specificity_gate'][1]} "
+                f"E={r['E_no_fabrication'][1]} F={r['F_no_eligibility'][1]}")
+        if r.get("routing"):
+            rt = r["routing"]
+            line += f"  | route {'ok ' if rt['routing_pass'] else 'BAD'} {rt['n_agents']}ag {rt['chosen']}"
+        print(line)
         for label in ("E_violations", "F_violations", "D_violations"):
             if r.get(label):
                 print(f"      {label[0]}: {r[label][:2]}")
+
+    if any(r.get("routing") for r in scored):
+        rt = [r["routing"] for r in scored if r.get("routing")]
+        ok = sum(1 for x in rt if x["routing_pass"])
+        slp_ok = sum(1 for x in rt if x["slp_ok"])
+        avg = sum(x["n_agents"] for x in rt) / max(1, len(rt))
+        print(f"\n  routing: {ok}/{len(rt)} correct · SLP correct {slp_ok}/{len(rt)} "
+              f"· {avg:.1f} agents/turn average (cost proxy)")
+        for x in rt:
+            if x["missed"]:
+                print(f"    missed {x['missed']} (chose {x['chosen']})")
+
     print(f"\nfull report: {report}")
 
 
@@ -359,7 +447,12 @@ def main():
     p = sub.add_parser("judge"); p.add_argument("path"); p.set_defaults(func=cmd_judge)
     p = sub.add_parser("gloss"); p.add_argument("path"); p.add_argument("--judge", action="store_true"); p.set_defaults(func=cmd_gloss)
     p = sub.add_parser("iterate"); p.add_argument("--name", default="haplo"); p.add_argument("--tag", default="v"); p.set_defaults(func=cmd_iterate)
-    p = sub.add_parser("batch"); p.add_argument("--ids", default=""); p.set_defaults(func=cmd_batch)
+    p = sub.add_parser("batch")
+    p.add_argument("--ids", default="")
+    p.add_argument("--path", choices=["chat", "consult"], default="chat",
+                   help="chat = production path, exercises the router (default); "
+                        "consult = un-routed full roster")
+    p.set_defaults(func=cmd_batch)
 
     args = ap.parse_args()
 
