@@ -944,6 +944,53 @@ def test_rate_limit_message_is_kind_and_points_at_the_care_team():
     assert "tomorrow" in daily
 
 
+def test_openrouter_requests_pin_zero_retention_providers(monkeypatch):
+    """OpenRouter does not log content itself, but by default it routes to
+    whichever endpoint is cheapest — and for an open-weights model that pool
+    includes providers which RETAIN prompts (11 of 34 for GLM 5.2, some in
+    jurisdictions a patient never chose). The text being routed is someone
+    describing their diagnosis, so the privacy promise has to cover the upstream
+    hop too.
+    """
+    from app import llm
+
+    captured = {}
+
+    class _FakeCompletions:
+        def create(self, **kwargs):
+            captured.update(kwargs)
+            raise RuntimeError("stop here — we only need the request shape")
+
+    class _FakeClient:
+        chat = type("C", (), {"completions": _FakeCompletions()})()
+
+    monkeypatch.setattr(llm, "get_client", lambda: _FakeClient())
+    monkeypatch.setattr(llm, "PROVIDER", "openrouter")
+
+    try:
+        llm.chat([{"role": "user", "content": "hello"}])
+    except RuntimeError:
+        pass
+
+    provider = (captured.get("extra_body") or {}).get("provider") or {}
+    assert provider.get("zdr") is True, "requests must pin zero-data-retention routing"
+    assert provider.get("data_collection") == "deny", "must refuse data-collecting providers"
+
+
+def test_provider_privacy_defaults_on_and_is_explicitly_disablable(monkeypatch):
+    from app import llm
+
+    monkeypatch.delenv("CANCERPATIENT_PROVIDER_PRIVACY", raising=False)
+    assert llm._provider_privacy_enabled() is True, "must default to private routing"
+
+    for off in ("0", "false", "no", "off", "OFF"):
+        monkeypatch.setenv("CANCERPATIENT_PROVIDER_PRIVACY", off)
+        assert llm._provider_privacy_enabled() is False, off
+
+    monkeypatch.setenv("CANCERPATIENT_PROVIDER_PRIVACY", "1")
+    assert llm._provider_privacy_enabled() is True
+
+
 def test_no_log_call_interpolates_patient_text():
     """The privacy page tells patients "we do not log the content of what you
     shared". Every search tool used to log its query on a failure path, and those

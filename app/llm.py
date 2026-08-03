@@ -70,6 +70,19 @@ def get_client() -> OpenAI:
     return _client
 
 
+def _provider_privacy_enabled() -> bool:
+    """Whether to restrict OpenRouter routing to zero-retention providers.
+
+    Defaults to ON. A privacy control that has to be remembered is not a control,
+    and the account-level equivalent lives in a dashboard nobody reviews — setting
+    it per request keeps it visible in the code and in review.
+    """
+    raw = os.getenv("CANCERPATIENT_PROVIDER_PRIVACY")
+    if raw is None or raw.strip() == "":
+        return True
+    return raw.strip().lower() not in ("0", "false", "no", "off")
+
+
 _RETRY_DELAY_RE = re.compile(r"['\"]retryDelay['\"]\s*:\s*['\"](\d+(?:\.\d+)?)s['\"]")
 
 
@@ -119,6 +132,27 @@ def chat(
             or os.getenv("MEDBOARD_MAX_TOKENS")
             or 16384
         )
+
+        # Pin routing to providers that neither retain nor train on the request.
+        #
+        # OpenRouter does not log content itself, but by default it will route to
+        # whichever endpoint is cheapest/fastest — and for an open-weights model
+        # that pool includes providers which retain prompts (for GLM 5.2: 11 of 34
+        # endpoints, among them datacenters in jurisdictions a patient never chose).
+        # The text being routed is someone describing their diagnosis, so the
+        # promise on the privacy page has to hold for the upstream hop too, not
+        # just for our own logs.
+        #
+        #   zdr             — only endpoints with zero data retention
+        #   data_collection — refuse providers that store data non-transiently
+        #
+        # These cost nothing here: the cheapest ZDR endpoint is the price we were
+        # already paying. They do shrink the fallback pool, so a provider outage
+        # is slightly more visible — the right trade for health data.
+        if _provider_privacy_enabled():
+            kwargs["extra_body"] = {
+                "provider": {"zdr": True, "data_collection": "deny"}
+            }
 
     # Reasoning ("thinking") budget. Defaults to MAX ("high"); override with
     # MEDBOARD_REASONING_EFFORT (none | low | medium | high, or "default" to omit).

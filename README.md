@@ -127,6 +127,10 @@ PubMed, Europe PMC, Semantic Scholar and ClinicalTrials.gov need no key.
   faster and is what the tuned setup uses)
 - `CANCERPATIENT_MAX_TOKENS` — output cap, needed on OpenRouter (default 16384)
 - `CANCERPATIENT_MAX_ACTIVE_TURNS`, `CANCERPATIENT_MAX_ACTIVE_SESSIONS` — concurrency caps
+- `CANCERPATIENT_PROVIDER_PRIVACY` (default **on**) — pins OpenRouter routing to
+  zero-data-retention providers (`zdr` + `data_collection: deny`). Costs nothing: the
+  cheapest ZDR endpoint is the same price. Off would let requests reach providers that
+  retain patient text, so only disable it knowingly.
 - `CANCERPATIENT_LOG_CONTENT` (default **off**) — when on, log lines show real search
   queries and model replies instead of `<redacted:NNc>`. Local debugging only: those
   strings are built from the patient's own words. The privacy page promises this stays off.
