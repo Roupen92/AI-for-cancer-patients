@@ -15,6 +15,7 @@ from typing import Any
 from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
 
 from app.config import MODEL_NAME, PROVIDER
+from app.logsafe import scrub
 
 # Sentinel exception so callers (specialist.py / board.py) can render a clean
 # user-facing message instead of dumping the raw OpenAI JSON.
@@ -226,8 +227,10 @@ def chat_json(messages, *, model=None, max_retries=5, parse_attempts=2) -> dict:
         parsed = _parse_json_payload(last_raw)
         if parsed is not None:
             return parsed
+        # The router's JSON echoes the patient's condition and topic, so the raw
+        # reply is patient-derived text and must not reach the log by default.
         log.warning(
-            "LLM returned unparseable JSON (attempt %d/%d): %r",
-            attempt, parse_attempts, last_raw[:160],
+            "LLM returned unparseable JSON (attempt %d/%d): %s",
+            attempt, parse_attempts, scrub(last_raw),
         )
     raise ValueError(f"LLM returned unparseable JSON: {last_raw[:200]}...")

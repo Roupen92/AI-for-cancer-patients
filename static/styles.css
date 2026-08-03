@@ -1559,3 +1559,78 @@ html, body {
   border-inline-start: 3px solid var(--border-strong);
   padding-inline-start: 14px;
 }
+
+/* --- Follow-ups and the profile nudge ------------------------------------- */
+/* The router carries conversation context, so follow-ups always worked — but a
+   fixed composer under a long answer reads as the end of the exchange. These
+   make continuing the obvious next move. */
+
+.followups {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--border);
+}
+
+.followups-label {
+  font-size: 0.82rem;
+  color: var(--text-faint);
+}
+
+.followup {
+  padding: 6px 12px;
+  background: var(--bg-tint);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.83rem;
+  color: var(--primary-strong);
+  cursor: pointer;
+  transition: border-color 0.12s ease, background 0.12s ease;
+}
+
+.followup:hover {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.profile-nudge {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  background: var(--bg-tint);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  font-size: 0.83rem;
+  color: var(--text-muted);
+}
+
+.profile-nudge-btn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  font-weight: 600;
+  color: var(--primary-strong);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* The About-me panel now sits BELOW the conversation, so it reads as optional
+   extra rather than a form standing between the patient and asking. */
+.profile-panel {
+  margin-bottom: 0;
+  margin-top: 24px;
+}
+
+@media print {
+  .followups,
+  .profile-nudge { display: none !important; }
+}

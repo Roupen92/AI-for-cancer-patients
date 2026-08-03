@@ -944,6 +944,64 @@ def test_rate_limit_message_is_kind_and_points_at_the_care_team():
     assert "tomorrow" in daily
 
 
+def test_no_log_call_interpolates_patient_text():
+    """The privacy page tells patients "we do not log the content of what you
+    shared". Every search tool used to log its query on a failure path, and those
+    queries are built from the patient's own words — "metastatic pancreatic cancer
+    diet Manchester" describes a person's health and where they live. This fails
+    if anyone puts raw patient-derived text back into a log line.
+    """
+    import re
+    from pathlib import Path
+
+    offenders = []
+    for path in sorted((Path(__file__).parent.parent / "app").rglob("*.py")):
+        src = path.read_text()
+        # Join wrapped log calls so multi-line ones are checked too.
+        flat = re.sub(r"\n\s+", " ", src)
+        for call in re.findall(r"log\.\w+\((?:[^()]|\([^()]*\))*\)", flat):
+            if "scrub(" in call:
+                continue
+            # A raw slice of one of these names is patient-derived text.
+            if re.search(r"\b(query|raw_query|q|last_raw|case|message|text|draft|content)\[:\d+\]", call):
+                offenders.append(f"{path.name}: {call[:110]}")
+    assert not offenders, "patient text in log calls:\n  " + "\n  ".join(offenders)
+
+
+def test_content_logging_is_opt_in_and_off_by_default():
+    from app import logsafe
+
+    assert logsafe.LOG_CONTENT is False, "content logging must default to off"
+    redacted = logsafe.scrub("metastatic pancreatic cancer diet Manchester")
+    assert "cancer" not in redacted
+    assert "Manchester" not in redacted
+    # Length is kept so a truncation bug is still diagnosable.
+    assert "44c" in redacted
+
+
+def test_timing_log_is_switchable_and_carries_no_content(monkeypatch, caplog):
+    import logging
+    from app import board, logsafe
+
+    summary = board._build_timing_summary(
+        {"specialists": {"researcher": {"wall": 9.0, "llm": 8.0, "tool": 1.0, "llm_n": 2, "tool_n": 1}},
+         "tools": {}, "synth": 0.0, "gloss": 0.0, "plain": 1.0, "translate": 0.0, "router": 2.0},
+        12.0,
+    )
+    with caplog.at_level(logging.INFO):
+        board.log_timing("turn cv_x/t_y", summary, mode="reply")
+    line = caplog.text
+    assert "TIMING" in line and "total=12.0s" in line
+    # Ids and numbers only — no free text from the patient.
+    assert "researcher" in line
+
+    caplog.clear()
+    monkeypatch.setattr(logsafe, "LOG_TIMING", False)
+    with caplog.at_level(logging.INFO):
+        board.log_timing("turn cv_x/t_y", summary, mode="reply")
+    assert "TIMING" not in caplog.text
+
+
 def test_pages_stamp_a_version_on_asset_urls(client):
     """Returning visitors were served fresh HTML with the PREVIOUS build's
     styles.css and app.js, so the chat rendered unstyled with no helper chips.

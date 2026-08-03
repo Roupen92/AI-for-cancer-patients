@@ -3,6 +3,8 @@ import logging
 import os
 import httpx
 
+from app.logsafe import scrub
+
 log = logging.getLogger(__name__)
 
 _API = "https://api.search.brave.com/res/v1/web/search"
@@ -64,32 +66,32 @@ async def run(args: dict, ctx) -> str:
             if r.status_code == 429:
                 return "Brave rate-limited this request. Try again in a moment."
             if r.status_code != 200:
-                log.warning("Brave HTTP %s for %r", r.status_code, query[:80])
+                log.warning("Brave HTTP %s for %r", r.status_code, scrub(query))
                 return (
                     f"Brave query failed: API returned {r.status_code}. "
                     "Try a different query or another tool."
                 )[:200]
             data = r.json()
     except httpx.HTTPStatusError as e:
-        log.warning("Brave HTTP %s for %r: %s", e.response.status_code, query[:80], e)
+        log.warning("Brave HTTP %s for %r: %s", e.response.status_code, scrub(query), e)
         return (
             f"Brave query failed: API returned {e.response.status_code}. "
             "Try a different query or another tool."
         )[:200]
     except httpx.RequestError as e:
-        log.warning("Brave request error for %r: %s", query[:80], e)
+        log.warning("Brave request error for %r: %s", scrub(query), e)
         return "Brave query failed: network error or timeout. Try a different query or another tool."[:200]
     except httpx.HTTPError as e:
-        log.warning("Brave HTTP error for %r: %s", query[:80], e)
+        log.warning("Brave HTTP error for %r: %s", scrub(query), e)
         return "Brave query failed: HTTP error. Try a different query or another tool."[:200]
     except ValueError as e:
-        log.warning("Brave JSON decode error for %r: %s", query[:80], e)
+        log.warning("Brave JSON decode error for %r: %s", scrub(query), e)
         return "Brave query failed: malformed response. Try a different query or another tool."[:200]
 
     try:
         web_results = ((data.get("web") or {}).get("results") or [])
     except (KeyError, TypeError, AttributeError) as e:
-        log.warning("Brave unexpected response shape for %r: %s", query[:80], e)
+        log.warning("Brave unexpected response shape for %r: %s", scrub(query), e)
         return "Brave query failed: unexpected response shape. Try a different query or another tool."[:200]
     if not web_results:
         return f"No Brave web results for: {query}"

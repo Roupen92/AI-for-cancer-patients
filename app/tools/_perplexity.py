@@ -18,6 +18,8 @@ import re
 
 import httpx
 
+from app.logsafe import scrub
+
 log = logging.getLogger(__name__)
 
 _API = "https://api.perplexity.ai/search"
@@ -103,17 +105,17 @@ async def search(
             if r.status_code == 429:
                 return [], "Perplexity rate-limited this request. Try again in a moment."
             if r.status_code != 200:
-                log.warning("Perplexity HTTP %s for %r", r.status_code, q[:120])
+                log.warning("Perplexity HTTP %s for %r", r.status_code, scrub(q))
                 return [], (
                     f"Perplexity Search failed: API returned {r.status_code}. "
                     "Try a different query or another tool."
                 )[:200]
             data = r.json()
     except httpx.RequestError as e:
-        log.warning("Perplexity request error for %r: %s", q[:120], e)
+        log.warning("Perplexity request error for %r: %s", scrub(q), e)
         return [], "Perplexity Search failed: network error. Try a different query."[:200]
     except ValueError as e:
-        log.warning("Perplexity JSON decode error for %r: %s", q[:120], e)
+        log.warning("Perplexity JSON decode error for %r: %s", scrub(q), e)
         return [], "Perplexity Search failed: malformed response."[:200]
 
     raw = data.get("results") or []

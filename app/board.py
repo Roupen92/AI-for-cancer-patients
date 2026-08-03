@@ -13,7 +13,7 @@ import re
 import time
 from typing import Callable
 
-from app import llm, language, prompts
+from app import llm, language, logsafe, prompts
 from app.config import (
     FULL_CONSULT_IDS,
     PARALLEL_SPECIALISTS,
@@ -475,7 +475,14 @@ def log_timing(label: str, summary: dict, **extra) -> None:
 
     Agents run in parallel, so their seconds sum to more than the wall clock;
     `slowest` is the one that actually set the pace.
+
+    Contains NO patient text — only opaque ids, durations and counts. It is still
+    switchable (CANCERPATIENT_LOG_TIMING=0) so "record nothing about turns at
+    all" is a single variable rather than a code change.
     """
+    if not logsafe.LOG_TIMING:
+        return
+
     specs = summary.get("specialists") or []
     slowest = max(specs, key=lambda s: s.get("wall_s", 0), default=None)
     bits = " ".join(

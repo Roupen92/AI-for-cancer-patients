@@ -559,8 +559,70 @@
       });
     }
 
+    addFollowUpRow(el, p.mode);
     finishTurn();
     scrollToBottom(true);
+  }
+
+  // --------------------------------------------------------------- follow-ups
+  // The router already carries conversation context, so follow-ups work — but
+  // nothing on screen said so, and after a long answer the composer reads like
+  // the end of the exchange rather than an invitation to keep going.
+  const FOLLOW_UPS = [
+    "Explain that more simply",
+    "What should I ask my care team?",
+    "What should I watch out for?",
+  ];
+
+  function addFollowUpRow(el, mode) {
+    if (mode === "clarify" || el.querySelector(".followups")) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "followups";
+    wrap.innerHTML = `<span class="followups-label">Ask a follow-up:</span>`;
+    FOLLOW_UPS.forEach((text) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "followup";
+      b.textContent = text;
+      b.addEventListener("click", () => {
+        if (state.busy) return;
+        send(text);
+      });
+      wrap.appendChild(b);
+    });
+
+    const actions = el.querySelector(".msg-actions");
+    if (actions && !actions.hidden) actions.before(wrap);
+    else el.appendChild(wrap);
+
+    // Once a conversation exists, the composer should invite continuation.
+    input.placeholder = "Ask a follow-up, or start a new question…";
+
+    // The profile is what makes answers specific rather than generic, and the
+    // moment someone has just read an answer is when that trade is legible.
+    maybeNudgeProfile(el);
+  }
+
+  function maybeNudgeProfile(el) {
+    const p = readProfileForm();
+    const empty = !p.condition && !p.location && !p.preferences;
+    if (!empty || document.querySelector(".profile-nudge")) return;
+
+    const nudge = document.createElement("div");
+    nudge.className = "profile-nudge";
+    nudge.innerHTML =
+      `<button type="button" class="profile-nudge-btn">Tell us about you</button>
+       <span>— your condition and where you live make answers specific instead of general.</span>`;
+    nudge.querySelector(".profile-nudge-btn").addEventListener("click", () => {
+      const body = $("#profile-body");
+      body.hidden = false;
+      $("#profile-toggle").setAttribute("aria-expanded", "true");
+      $("#profile-toggle").classList.add("is-open");
+      $("#p-condition").focus();
+      $(".profile-panel").scrollIntoView({ behavior: "smooth", block: "center" });
+    });
+    el.appendChild(nudge);
   }
 
   // ---------------------------------------------------------------- citations

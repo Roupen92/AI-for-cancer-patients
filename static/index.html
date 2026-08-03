@@ -32,6 +32,48 @@
 
   <main id="main" class="chat-main">
 
+    <!-- TRANSCRIPT -->
+    <section id="transcript" class="transcript" aria-live="polite" aria-label="Conversation">
+      <div class="intro" id="intro">
+        <h1 class="intro-h1">What can we help you understand?</h1>
+        <p class="intro-sub">
+          Ask about any condition, in your own words. We'll search the same places your
+          doctors do — clinical guidelines, published research, patient organizations and
+          the clinical trial registry — and explain what we find in plain language, with
+          links so you can check every claim.
+        </p>
+        <p class="intro-how">
+          Depending on what you ask, we bring in the helpers who are actually relevant —
+          sometimes one, sometimes a small team.
+        </p>
+
+        <div class="team-strip" id="team-strip" aria-label="The helpers we can call on"></div>
+
+        <div class="starters" id="starters">
+          <p class="starters-label">Not sure where to start?</p>
+          <div class="starter-grid">
+            <button type="button" class="starter" data-fill="I was just diagnosed with type 2 diabetes and I don't really understand what it means. Where do I start?">
+              I was just diagnosed and I don't understand it
+            </button>
+            <button type="button" class="starter" data-fill="My doctor says I have heart failure and I should cut back on salt. How much salt is actually allowed, and what does that look like in real meals?">
+              How much salt can I actually have?
+            </button>
+            <button type="button" class="starter" data-fill="Are there any clinical trials I could ask my specialist about for my condition?">
+              Are there clinical trials I could ask about?
+            </button>
+            <button type="button" class="starter" data-fill="I'm struggling to afford my medication and getting to appointments is hard. What help exists where I live?">
+              I can't afford my medication
+            </button>
+            <button type="button" class="starter" data-fill="I keep coughing when I drink water and food feels like it gets stuck. What could be going on and who should I see?">
+              Food and drink keep going down wrong
+            </button>
+            <button type="button" class="starter" data-fill="I'd like to get more active but I'm scared of overdoing it with my condition. How do I start safely?">
+              I want to get active without overdoing it
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
     <!-- ABOUT-ME PANEL -->
     <aside class="profile-panel" aria-labelledby="profile-heading">
       <button type="button" id="profile-toggle" class="profile-toggle" aria-expanded="false" aria-controls="profile-body">
@@ -85,48 +127,6 @@
       </div>
     </aside>
 
-    <!-- TRANSCRIPT -->
-    <section id="transcript" class="transcript" aria-live="polite" aria-label="Conversation">
-      <div class="intro" id="intro">
-        <h1 class="intro-h1">What can we help you understand?</h1>
-        <p class="intro-sub">
-          Ask about any condition, in your own words. We'll search the same places your
-          doctors do — clinical guidelines, published research, patient organizations and
-          the clinical trial registry — and explain what we find in plain language, with
-          links so you can check every claim.
-        </p>
-        <p class="intro-how">
-          Depending on what you ask, we bring in the helpers who are actually relevant —
-          sometimes one, sometimes a small team.
-        </p>
-
-        <div class="team-strip" id="team-strip" aria-label="The helpers we can call on"></div>
-
-        <div class="starters" id="starters">
-          <p class="starters-label">Not sure where to start?</p>
-          <div class="starter-grid">
-            <button type="button" class="starter" data-fill="I was just diagnosed with type 2 diabetes and I don't really understand what it means. Where do I start?">
-              I was just diagnosed and I don't understand it
-            </button>
-            <button type="button" class="starter" data-fill="My doctor says I have heart failure and I should cut back on salt. How much salt is actually allowed, and what does that look like in real meals?">
-              How much salt can I actually have?
-            </button>
-            <button type="button" class="starter" data-fill="Are there any clinical trials I could ask my specialist about for my condition?">
-              Are there clinical trials I could ask about?
-            </button>
-            <button type="button" class="starter" data-fill="I'm struggling to afford my medication and getting to appointments is hard. What help exists where I live?">
-              I can't afford my medication
-            </button>
-            <button type="button" class="starter" data-fill="I keep coughing when I drink water and food feels like it gets stuck. What could be going on and who should I see?">
-              Food and drink keep going down wrong
-            </button>
-            <button type="button" class="starter" data-fill="I'd like to get more active but I'm scared of overdoing it with my condition. How do I start safely?">
-              I want to get active without overdoing it
-            </button>
-          </div>
-        </div>
-      </div>
-    </section>
   </main>
 
   <!-- COMPOSER -->

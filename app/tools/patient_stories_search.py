@@ -24,6 +24,8 @@ import httpx
 from app.config import SPECIALIST_CONFIGS
 from app.tools import _perplexity
 
+from app.logsafe import scrub
+
 log = logging.getLogger(__name__)
 
 _ITUNES_LOOKUP = "https://itunes.apple.com/lookup"
@@ -361,11 +363,11 @@ async def _brave_stories(
             log.warning("Brave rate-limited patient_stories_search")
             return []
         if r.status_code != 200:
-            log.warning("Brave HTTP %s for stories query %r", r.status_code, q[:120])
+            log.warning("Brave HTTP %s for stories query %r", r.status_code, scrub(q))
             return []
         data = r.json()
     except (httpx.RequestError, ValueError) as e:
-        log.warning("Brave error for stories query %r: %s", q[:120], e)
+        log.warning("Brave error for stories query %r: %s", scrub(q), e)
         return []
 
     web_results = ((data.get("web") or {}).get("results") or [])

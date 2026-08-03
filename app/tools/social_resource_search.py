@@ -10,6 +10,8 @@ import httpx
 
 from app.tools import _perplexity
 
+from app.logsafe import scrub
+
 log = logging.getLogger(__name__)
 
 _API = "https://api.search.brave.com/res/v1/web/search"
@@ -230,16 +232,16 @@ async def run(args: dict, ctx) -> str:
             if r.status_code == 429:
                 return "Brave rate-limited this request. Try again in a moment."
             if r.status_code != 200:
-                log.warning("Brave HTTP %s for %r", r.status_code, q[:120])
+                log.warning("Brave HTTP %s for %r", r.status_code, scrub(q))
                 return (
                     f"social_resource_search failed: API returned {r.status_code}."
                 )[:200]
             data = r.json()
     except httpx.RequestError as e:
-        log.warning("Brave request error for %r: %s", q[:120], e)
+        log.warning("Brave request error for %r: %s", scrub(q), e)
         return "social_resource_search failed: network error."[:200]
     except ValueError as e:
-        log.warning("Brave JSON decode error for %r: %s", q[:120], e)
+        log.warning("Brave JSON decode error for %r: %s", scrub(q), e)
         return "social_resource_search failed: malformed response."[:200]
 
     try:

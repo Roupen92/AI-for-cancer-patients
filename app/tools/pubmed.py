@@ -6,6 +6,8 @@ import threading
 import time
 from Bio import Entrez
 
+from app.logsafe import scrub
+
 log = logging.getLogger(__name__)
 
 Entrez.email = os.getenv("NCBI_EMAIL", "tumor-board@example.com")
@@ -168,7 +170,7 @@ def _entrez_search_sync(query: str, retmax: int, sort: str = "pub+date") -> list
         handle.close()
         return list(rec.get("IdList", []))
     except Exception as e:
-        log.warning("Entrez esearch failed for %r: %s", query[:80], e)
+        log.warning("Entrez esearch failed for %r: %s", scrub(query), e)
         return []
 
 

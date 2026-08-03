@@ -127,6 +127,11 @@ PubMed, Europe PMC, Semantic Scholar and ClinicalTrials.gov need no key.
   faster and is what the tuned setup uses)
 - `CANCERPATIENT_MAX_TOKENS` — output cap, needed on OpenRouter (default 16384)
 - `CANCERPATIENT_MAX_ACTIVE_TURNS`, `CANCERPATIENT_MAX_ACTIVE_SESSIONS` — concurrency caps
+- `CANCERPATIENT_LOG_CONTENT` (default **off**) — when on, log lines show real search
+  queries and model replies instead of `<redacted:NNc>`. Local debugging only: those
+  strings are built from the patient's own words. The privacy page promises this stays off.
+- `CANCERPATIENT_LOG_TIMING` (default on) — the per-turn timing line. Carries no patient
+  text, only ids, durations and counts; set to 0 to record nothing about turns at all.
 - `CANCERPATIENT_RATE_PER_HOUR` (default 20), `CANCERPATIENT_RATE_PER_DAY` (default 60) —
   per-IP limits on the endpoints that spend credits. Set both to 0 to disable.
   Deliberately generous: a clinic, library or care home can put many genuine
