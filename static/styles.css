@@ -1634,3 +1634,33 @@ html, body {
   .followups,
   .profile-nudge { display: none !important; }
 }
+
+/* --- Citation tooltip: reachable ----------------------------------------- */
+/* The tooltip holds a source link and a summary worth reading, so it has to be
+   hoverable, not just glanceable. The gap between the citation and the popup is
+   bridged by a grace timer in shared.js; these make the target easier to hit and
+   show when it has been pinned by a click (the only mode that works on touch). */
+
+.cite-tooltip {
+  pointer-events: auto;
+}
+
+.cite-tooltip.is-pinned {
+  border-color: var(--primary);
+  box-shadow: 0 6px 24px rgba(80, 60, 40, 0.16);
+}
+
+/* An invisible lip along the top edge so a pointer travelling down from the
+   citation lands on the tooltip a few pixels early instead of in dead space. */
+.cite-tooltip::before {
+  content: "";
+  position: absolute;
+  top: -10px;
+  left: 0;
+  right: 0;
+  height: 10px;
+}
+
+.cite-tooltip a {
+  pointer-events: auto;
+}

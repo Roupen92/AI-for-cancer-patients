@@ -172,12 +172,38 @@
     if (opts.idPrefix) idPrefix = opts.idPrefix;
   }
 
+  // Moving the pointer from the citation to the tooltip crosses an 8px gap where
+  // neither is hovered. Hiding on that first mouseout made the tooltip
+  // unreachable — you could never click "Open source", and a lay summary that
+  // was still loading vanished before it arrived. A short grace period, plus
+  // keeping it open while the pointer is on the tooltip itself, fixes both.
+  let hideTimer = null;
+  let pinned = false;
+
+  function cancelHide() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function scheduleHide(delay = 260) {
+    cancelHide();
+    hideTimer = setTimeout(() => {
+      if (!pinned) hideTooltip();
+    }, delay);
+  }
+
   function ensureTooltip() {
     if (tooltipEl) return tooltipEl;
     const el = document.createElement("div");
     el.className = "cite-tooltip";
     el.setAttribute("role", "tooltip");
     el.hidden = true;
+    // The tooltip is interactive: it holds a link to the source and text worth
+    // selecting, so hovering it must keep it alive.
+    el.addEventListener("mouseenter", cancelHide);
+    el.addEventListener("mouseleave", () => scheduleHide());
     document.body.appendChild(el);
     tooltipEl = el;
     return el;
@@ -265,30 +291,61 @@
   }
 
   function hideTooltip() {
-    if (tooltipEl) tooltipEl.hidden = true;
+    cancelHide();
+    pinned = false;
+    if (tooltipEl) {
+      tooltipEl.hidden = true;
+      tooltipEl.classList.remove("is-pinned");
+    }
   }
 
   document.addEventListener("mouseover", (e) => {
     const cite = e.target.closest && e.target.closest(".cite");
     if (!cite) return;
+    cancelHide();
     const ref = resolveRef(cite.dataset.citeLabel);
     if (ref) showTooltip(cite, ref);
   });
   document.addEventListener("mouseout", (e) => {
     const cite = e.target.closest && e.target.closest(".cite");
     if (!cite) return;
-    const related = e.relatedTarget;
-    if (related && (related === tooltipEl || (tooltipEl && tooltipEl.contains(related)))) return;
-    hideTooltip();
+    // Don't hide on the way to the tooltip — scheduleHide gives the pointer time
+    // to cross the gap, and the tooltip's own mouseenter cancels it.
+    scheduleHide();
   });
+
+  // Clicking a citation pins it open, which is the only way this works on touch
+  // (no hover at all) and the reliable way to reach the source link on desktop.
+  // The anchor keeps its href so it still jumps to the reference list without JS.
+  document.addEventListener("click", (e) => {
+    const cite = e.target.closest && e.target.closest(".cite");
+    if (cite) {
+      const ref = resolveRef(cite.dataset.citeLabel);
+      if (ref) {
+        e.preventDefault();
+        cancelHide();
+        pinned = true;
+        showTooltip(cite, ref);
+        if (tooltipEl) tooltipEl.classList.add("is-pinned");
+      }
+      return;
+    }
+    // A click anywhere else dismisses it — but not a click inside the tooltip,
+    // which would make the source link unusable.
+    if (tooltipEl && !tooltipEl.hidden && !tooltipEl.contains(e.target)) {
+      hideTooltip();
+    }
+  });
+
   document.addEventListener("focusin", (e) => {
     if (!e.target.classList || !e.target.classList.contains("cite")) return;
+    cancelHide();
     const ref = resolveRef(e.target.dataset.citeLabel);
     if (ref) showTooltip(e.target, ref);
   });
   document.addEventListener("focusout", (e) => {
     if (!e.target.classList || !e.target.classList.contains("cite")) return;
-    hideTooltip();
+    scheduleHide();
   });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") hideTooltip();
