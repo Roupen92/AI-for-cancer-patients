@@ -358,6 +358,20 @@ def cmd_batch(args):
             v = verdict.get(key) or {}
             return [v.get("pass"), v.get("score")]
 
+        # A weak model under test can make the JUDGE's own JSON come back
+        # incomplete. Losing a whole run to a missing key would silently bias the
+        # comparison toward whichever model happens to produce tidier judge
+        # output, so derive the verdict from the criteria that did arrive.
+        overall = verdict.get("overall_pass")
+        if overall is None:
+            required = ("criterion_a_institutions", "criterion_b_synthesis",
+                        "criterion_d_specificity_gate", "criterion_e_no_fabrication",
+                        "criterion_f_no_eligibility_promise")
+            present = [verdict.get(k) for k in required if isinstance(verdict.get(k), dict)]
+            overall = bool(present) and all(v.get("pass") for v in present)
+            print(f"    (judge omitted overall_pass; derived {overall} from "
+                  f"{len(present)}/{len(required)} criteria)", file=sys.stderr)
+
         row = {
             "id": c["id"], "theme": c["theme"], "location": c["location"],
             "model": model, "path": args.path, "chars": len(md),
@@ -368,11 +382,11 @@ def cmd_batch(args):
             "D_specificity_gate": crit("criterion_d_specificity_gate"),
             "E_no_fabrication": crit("criterion_e_no_fabrication"),
             "F_no_eligibility": crit("criterion_f_no_eligibility_promise"),
-            "overall_pass": verdict["overall_pass"],
+            "overall_pass": overall,
             "D_violations": (verdict.get("criterion_d_specificity_gate") or {}).get("violations", []),
             "E_violations": (verdict.get("criterion_e_no_fabrication") or {}).get("violations", []),
             "F_violations": (verdict.get("criterion_f_no_eligibility_promise") or {}).get("violations", []),
-            "summary": verdict["summary"],
+            "summary": verdict.get("summary", ""),
         }
         results.append(row)
         v = "PASS" if row["overall_pass"] else "FAIL"
