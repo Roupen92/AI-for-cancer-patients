@@ -575,6 +575,87 @@ def test_plain_language_accepts_a_faithful_simplification(monkeypatch):
     assert board._plain_language(src) == better
 
 
+def _plain_language_returning(monkeypatch, text):
+    """Point board.llm.chat at a fixed rewrite and hand back the runner."""
+    from app import board
+
+    def fake_chat(messages, **kwargs):
+        class M:
+            content = text
+        class C:
+            message = M()
+        class R:
+            choices = [C()]
+        return R()
+
+    monkeypatch.setattr(board.llm, "chat", fake_chat)
+    return board
+
+
+# The citation and number checks are blind to letters, so the two worst rewrites
+# a plain-language pass can produce slipped through both: erasing the variant
+# name a patient has to repeat to their oncologist, and inverting a finding.
+# Verified failing before _variant_tokens / _polarity_flips existed.
+
+_GENOMIC_DRAFT = (
+    "Your report shows an **EGFR exon 19 deletion** [3] and the tumour is MSI-high [4]. "
+    "The germline result was pathogenic [5]. TMB was 12 mutations per megabase [6]."
+)
+
+
+@pytest.mark.parametrize("rewrite, why", [
+    (
+        "Your report shows a change in one of your genes at position 19 [3] and the tumour "
+        "is MSI-high [4]. The germline result was pathogenic [5]. TMB was 12 mutations per "
+        "megabase [6].",
+        "erased the variant notation",
+    ),
+    (
+        "Your report shows an **EGFR exon 19 deletion** [3] and the tumour is MSI-low [4]. "
+        "The germline result was pathogenic [5]. TMB was 12 mutations per megabase [6].",
+        "flipped MSI-high to MSI-low",
+    ),
+    (
+        "Your report shows an **EGFR exon 19 deletion** [3] and the tumour is MSI-high [4]. "
+        "The somatic result was pathogenic [5]. TMB was 12 mutations per megabase [6].",
+        "flipped germline to somatic",
+    ),
+    (
+        "Your report shows an **EGFR exon 19 deletion** [3] and the tumour is MSI-high [4]. "
+        "The germline result was benign [5]. TMB was 12 mutations per megabase [6].",
+        "flipped pathogenic to benign",
+    ),
+])
+def test_plain_language_rejects_a_rewrite_that_loses_or_inverts_a_finding(
+    monkeypatch, rewrite, why
+):
+    board = _plain_language_returning(monkeypatch, rewrite)
+    assert board._plain_language(_GENOMIC_DRAFT) == _GENOMIC_DRAFT, why
+
+
+def test_plain_language_still_accepts_a_faithful_genomic_simplification(monkeypatch):
+    # Glossing beside the exact string is exactly what the pass is FOR. This is
+    # the case that must not regress when the checks above are tightened.
+    faithful = (
+        "Your report shows an **EGFR exon 19 deletion** [3] — a change in a gene called "
+        "EGFR. The tumour is MSI-high [4], which means it has many small DNA errors. "
+        "The germline result was pathogenic [5]: the change is in the DNA you were born "
+        "with, and it is known to cause disease. TMB was 12 mutations per megabase [6]."
+    )
+    board = _plain_language_returning(monkeypatch, faithful)
+    assert board._plain_language(_GENOMIC_DRAFT) == faithful
+
+
+def test_plain_language_does_not_trip_on_ordinary_high_and_low_prose(monkeypatch):
+    # "high" and "low" are everywhere in diet advice. The flip check is anchored
+    # to a marker and requires the opposite to APPEAR, so dropping a bare "high"
+    # in a legitimate rewrite must not cost the whole pass.
+    src = "Choose meals high in fibre and low in saturated fat [2]."
+    rewrite = "Pick meals with lots of fibre and low in saturated fat [2]."
+    board = _plain_language_returning(monkeypatch, rewrite)
+    assert board._plain_language(src) == rewrite
+
+
 def test_plain_language_survives_an_llm_failure(monkeypatch):
     from app import board
 
@@ -1199,3 +1280,5 @@ def test_reference_urls_go_through_the_scheme_guard():
     for expr in raw_hrefs:
         assert expr in ("href", "ttHref"), f"anchor built from unguarded {expr!r}"
     assert raw_hrefs, "expected to find the reference/tooltip anchors"
+
+

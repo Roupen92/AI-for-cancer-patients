@@ -242,6 +242,114 @@ def _clinical_numbers(md: str) -> set[str]:
     return set(_NUMBER_RE.findall(stripped))
 
 
+# --------------------------------------------------------------------------- #
+# Load-bearing tokens the number check cannot see
+# --------------------------------------------------------------------------- #
+#
+# The citation and number checks below are blind to letters, and the two worst
+# rewrites a plain-language pass can produce are made of letters:
+#
+#   "an EGFR exon 19 deletion"  ->  "a change in one of your genes at position 19"
+#   "MSI-high ... germline pathogenic"  ->  "MSI-low ... somatic benign"
+#
+# Both keep every citation, keep the length, and cost at most one number — which
+# the `max(2, 20%)` tolerance permits. Both were verified to pass before these
+# checks existed. The second one inverts the clinical meaning of the answer:
+# told MSI-low instead of MSI-high, a patient is told immunotherapy is off the
+# table when it is the indicated option.
+
+# Variant notation is unambiguous and rare, and it is the exact string a patient
+# has to say out loud to their oncologist — a description of it is worthless. No
+# tolerance: no legitimate simplification removes one.
+_VARIANT_RE = re.compile(
+    r"\b[A-Z]\d{1,4}[A-Z*]\b"               # V600E, G12C, T790M
+    r"|\b[cgmnp]\.[A-Za-z0-9_>*+()-]{2,}"   # c.1799T>A, p.Val600Glu
+    r"|\bexon\s+\d+\b",                     # exon 19
+    re.IGNORECASE,
+)
+
+# Markers whose whole meaning is carried by an adjacent polarity word.
+_MARKER_RE = re.compile(
+    r"\b(MSI|TMB|HRD|GIS|PD-?L1|CPS|TPS|VAF|MMR|ER|PR|HER2|ERBB2)\b", re.IGNORECASE
+)
+# Shorthand forms that fold the polarity into the token itself.
+_POLARITY_SHORTHAND = (
+    (re.compile(r"\bMSI-?H\b"), "MSI high"),
+    (re.compile(r"\bMSI-?L\b"), "MSI low"),
+    (re.compile(r"\bTMB-?H\b"), "TMB high"),
+    (re.compile(r"\bTMB-?L\b"), "TMB low"),
+    (re.compile(r"\bdMMR\b"), "MMR deficient"),
+    (re.compile(r"\bpMMR\b"), "MMR proficient"),
+)
+# Checked as FLIPS, not as survival: glossing "germline" into "inherited" is a
+# good simplification, turning it into "somatic" is a different answer. So a pair
+# only fires when the original is gone AND its opposite has appeared — which no
+# faithful rewrite does, and which keeps ordinary prose ("high in fibre, low in
+# fat") from tripping the check.
+_ANCHORED_POLARITY = (("high", "low"), ("positive", "negative"))
+_STANDALONE_POLARITY = (
+    ("pathogenic", "benign"),
+    ("germline", "somatic"),
+    ("deficient", "proficient"),
+    ("wild-type", "mutated"),
+)
+
+
+def _variant_tokens(md: str) -> set[str]:
+    stripped = _CITE_RE.sub(" ", md or "")
+    return {t.upper() for t in _VARIANT_RE.findall(stripped)}
+
+
+def _marker_polarity(md: str) -> set[tuple[str, str]]:
+    """(marker, polarity) claims, e.g. {("MSI", "high"), ("PDL1", "positive")}."""
+    text = _CITE_RE.sub(" ", md or "")
+    for pattern, expanded in _POLARITY_SHORTHAND:
+        text = pattern.sub(expanded, text)
+    lowered = text.lower()
+
+    claims: set[tuple[str, str]] = set()
+    for match in _MARKER_RE.finditer(text):
+        window = lowered[max(0, match.start() - 40) : match.end() + 40]
+        marker = match.group(1).upper().replace("-", "")
+        for pair in _ANCHORED_POLARITY:
+            for word in pair:
+                if re.search(rf"\b{word}\b", window):
+                    claims.add((marker, word))
+    return claims
+
+
+def _polarity_flips(src: str, out: str) -> list[str]:
+    """Meaning inversions the pass introduced. Empty is the healthy case."""
+    flips = []
+
+    opposite = {}
+    for a, b in _ANCHORED_POLARITY:
+        opposite[a], opposite[b] = b, a
+
+    src_claims, out_claims = _marker_polarity(src), _marker_polarity(out)
+    for marker, polarity in src_claims:
+        anti = opposite.get(polarity)
+        if anti and (marker, anti) in out_claims and (marker, polarity) not in out_claims:
+            flips.append(f"{marker} {polarity}->{anti}")
+
+    src_low, out_low = (src or "").lower(), (out or "").lower()
+
+    def present(text: str, term: str) -> bool:
+        return re.search(rf"\b{re.escape(term)}\b", text) is not None
+
+    for a, b in _STANDALONE_POLARITY:
+        for term, anti in ((a, b), (b, a)):
+            if (
+                present(src_low, term)
+                and not present(out_low, term)
+                and present(out_low, anti)
+                and not present(src_low, anti)
+            ):
+                flips.append(f"{term}->{anti}")
+
+    return flips
+
+
 def _gloss_institutions(english_md: str) -> str:
     """Post-synthesis safety pass: guarantee every organization named in the
     summary is identified in plain English for the patient (e.g., "NICE" ->
@@ -342,6 +450,25 @@ def _plain_language(md: str) -> str:
                 sorted(lost_numbers)[:10], len(src_numbers),
             )
             return md
+
+    # No tolerance here, unlike the number check: "three times a week" for "3
+    # times per week" is a legitimate rewrite, but there is no legitimate rewrite
+    # of "V600E" that isn't "V600E".
+    lost_variants = _variant_tokens(src) - _variant_tokens(out)
+    if lost_variants:
+        log.warning(
+            "Plain-language pass dropped variant notation %s; keeping original.",
+            sorted(lost_variants)[:10],
+        )
+        return md
+
+    flips = _polarity_flips(src, out)
+    if flips:
+        log.warning(
+            "Plain-language pass INVERTED a finding (%s); keeping original.",
+            ", ".join(sorted(flips)[:10]),
+        )
+        return md
 
     return out
 
