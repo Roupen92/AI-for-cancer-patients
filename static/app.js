@@ -19,6 +19,8 @@
     refsByLabel: new Map(),   // label -> ref (conversation-wide)
     currentTurnEl: null,      // the .msg-assistant being built
     agentCards: new Map(),    // agent id -> card element (current turn)
+    elapsedTimer: null,       // 1s ticker on the current turn
+    targetLanguage: "English",
   };
 
   // ------------------------------------------------------------------ profile
@@ -142,8 +144,14 @@
     el.innerHTML = `
       <div class="msg-meta">
         <span class="msg-status" aria-live="polite">Working out who should answer this…</span>
+        <span class="msg-elapsed" hidden>0:00</span>
       </div>
       <div class="msg-agents" hidden></div>
+      <div class="msg-progress" hidden>
+        <ol class="work-steps"></ol>
+        <div class="work-bar" aria-hidden="true"></div>
+        <p class="work-note">We read the real sources before we answer, so this usually takes one to three minutes. Nothing is stuck — you can leave this tab open and come back.</p>
+      </div>
       <div class="msg-body"></div>
       <div class="msg-sources" hidden>
         <button type="button" class="sources-toggle" aria-expanded="false">Sources used <span class="sources-count"></span></button>
@@ -162,6 +170,85 @@
     if (!state.currentTurnEl) return;
     const el = state.currentTurnEl.querySelector(".msg-status");
     if (el) el.textContent = text;
+  }
+
+  // ------------------------------------------------------- proof of life
+  // The helpers finish researching well before the answer exists: synthesis,
+  // the institution-naming pass and the plain-language rewrite are another
+  // 30-100 seconds of work with no chips left to animate. A status line that
+  // changes three times in two minutes is indistinguishable from a hung page,
+  // so the wait gets a clock that ticks every second and a checklist that shows
+  // what is left to do.
+
+  function startElapsed() {
+    stopElapsed();
+    const el = state.currentTurnEl && state.currentTurnEl.querySelector(".msg-elapsed");
+    if (!el) return;
+    const startedAt = Date.now();
+    const tick = () => {
+      const s = Math.round((Date.now() - startedAt) / 1000);
+      el.textContent = `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+    };
+    el.hidden = false;
+    tick();
+    state.elapsedTimer = setInterval(tick, 1000);
+  }
+
+  function stopElapsed() {
+    if (state.elapsedTimer) {
+      clearInterval(state.elapsedTimer);
+      state.elapsedTimer = null;
+    }
+  }
+
+  // Keyed by the server's `phase` names so an arriving phase event can mark its
+  // own step. `researching` has no phase event of its own — the agent chips are
+  // that step — so it is marked done by whichever write-up phase lands first.
+  const STEP_LABELS = {
+    researching: "Reading the sources",
+    synthesizing: "Putting it together into one answer",
+    naming_sources: "Checking every source is named clearly",
+    simplifying: "Rewriting it in plain language",
+    translating: "Translating",
+  };
+
+  function planSteps(mode) {
+    if (mode === "clarify") return [];
+    const steps = ["researching"];
+    if (mode === "team") steps.push("synthesizing", "naming_sources");
+    steps.push("simplifying");
+    if ((state.targetLanguage || "English").toLowerCase() !== "english") steps.push("translating");
+    return steps;
+  }
+
+  function renderSteps(keys) {
+    if (!state.currentTurnEl || !keys.length) return;
+    const wrap = state.currentTurnEl.querySelector(".msg-progress");
+    const list = wrap.querySelector(".work-steps");
+    list.innerHTML = "";
+    keys.forEach((key) => {
+      const li = document.createElement("li");
+      li.className = "work-step";
+      li.dataset.step = key;
+      li.innerHTML = `<span class="work-step-icon" aria-hidden="true">○</span><span></span>`;
+      li.lastElementChild.textContent = STEP_LABELS[key];
+      list.appendChild(li);
+    });
+    wrap.hidden = false;
+    markStep(keys[0]);
+  }
+
+  function markStep(key) {
+    if (!state.currentTurnEl) return;
+    const steps = [...state.currentTurnEl.querySelectorAll(".work-step")];
+    const at = steps.findIndex((li) => li.dataset.step === key);
+    if (at < 0) return;
+    steps.forEach((li, i) => {
+      li.classList.toggle("is-done", i < at);
+      li.classList.toggle("is-active", i === at);
+      const icon = li.querySelector(".work-step-icon");
+      if (icon) icon.textContent = i < at ? "✓" : i === at ? "◍" : "○";
+    });
   }
 
   // ------------------------------------------------------------- agent cards
@@ -221,6 +308,8 @@
 
     addUserMessage(message);
     state.currentTurnEl = addAssistantShell();
+    state.targetLanguage = currentProfile.language || "English";
+    startElapsed();
     scrollToBottom(true);
 
     let payload;
@@ -303,6 +392,15 @@
   }
 
   function finishTurn() {
+    stopElapsed();
+    // Every exit from a turn comes through here — completed, failed, rate-limited
+    // or stopped — so the progress chrome is retired in one place.
+    if (state.currentTurnEl) {
+      const progress = state.currentTurnEl.querySelector(".msg-progress");
+      if (progress) progress.hidden = true;
+      const elapsed = state.currentTurnEl.querySelector(".msg-elapsed");
+      if (elapsed) elapsed.hidden = true;
+    }
     state.busy = false;
     $("#send-btn").disabled = false;
     $("#stop-btn").hidden = true;
@@ -359,6 +457,9 @@
     const p = ev.payload || {};
     switch (ev.type) {
       case "turn_started":
+        // The server normalizes the language, so prefer its answer over the raw
+        // profile field when deciding whether a translation step is coming.
+        if (p.target_language) state.targetLanguage = p.target_language;
         break;
 
       case "red_flag":
@@ -374,6 +475,7 @@
         if (p.phase === "translating" && p.target_language) {
           setTurnStatus(`Translating to ${p.target_language}…`);
         }
+        markStep(p.phase);
         break;
 
       case "fallback":
@@ -427,6 +529,7 @@
       setTurnStatus("One quick question first…");
       return;
     }
+    renderSteps(planSteps(p.mode));
     if (specialists.length) {
       renderAgentCards(specialists);
       const names = specialists.map((s) => s.display_name).join(", ");
