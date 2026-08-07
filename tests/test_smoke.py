@@ -278,6 +278,135 @@ def test_trials_prompt_forbids_eligibility_claims():
     assert "never say or imply the patient qualifies" in low
 
 
+def test_trials_prompt_forbids_inferring_a_biomarker():
+    # A fabricated marker ("lung cancer" -> EGFR) sends the whole search down a
+    # path the patient never described.
+    from app import prompts
+    low = prompts.TRIALS.lower()
+    assert "never invent a marker" in low
+    assert "biomarker" in low
+    # Having the marker a trial studies is not the same as being eligible for it,
+    # and marker-plus-trial is where that conflation is most tempting.
+    assert "is not eligibility" in low
+
+
+def test_trials_schema_routes_markers_to_the_biomarker_parameter():
+    from app.tools.clinical_trials import SCHEMA
+    props = SCHEMA["parameters"]["properties"]
+    assert "biomarker" in props, "the biomarker parameter is what reaches eligibility criteria"
+    assert "never infer" in props["biomarker"]["description"].lower()
+    # other_terms must actively point markers away from itself, or the model will
+    # keep using it and keep getting zero hits.
+    assert "instead" in props["other_terms"]["description"].lower()
+
+
+# --------------------------------------------------------------------------- #
+# Biomarker trial search
+# --------------------------------------------------------------------------- #
+#
+# `query.term` searches an area that excludes EligibilityCriteria, so the old
+# free-text path returned totalCount 0 against the live registry for BRAF V600E
+# melanoma in the UK. These pin the query shape and the honesty of the rendering,
+# without touching the network.
+
+def test_biomarker_query_is_parenthesized_and_reaches_eligibility_criteria():
+    from app.tools.clinical_trials import _biomarker_query
+    q = _biomarker_query("BRAF V600E")
+    # Essie binds AND tighter than OR, silently: an unparenthesized OR-group
+    # followed by `AND AREA[LocationCountry]Canada` applies the location to only
+    # the last branch. Verified live at 114 results vs 20, with no error either
+    # way — nothing but this assertion catches it.
+    assert q.startswith("(") and q.endswith(")")
+    assert 'AREA[EligibilityCriteria]"BRAF V600E"' in q
+    assert 'AREA[BriefTitle]"BRAF V600E"' in q
+    assert " OR " in q and " AND " not in q
+
+
+def test_biomarker_query_neutralizes_quotes_in_the_marker():
+    from app.tools.clinical_trials import _biomarker_query
+    q = _biomarker_query('BRAF "V600E"')
+    assert q.count('"') == 18, "one quoted term per AREA clause, nine clauses"
+
+
+_SELECTING_STUDY = {
+    "protocolSection": {
+        "identificationModule": {"briefTitle": "Dabrafenib in BRAF V600E Melanoma"},
+        "conditionsModule": {"conditions": ["Melanoma"]},
+        "armsInterventionsModule": {},
+    }
+}
+_MENTIONING_STUDY = {
+    "protocolSection": {
+        "identificationModule": {"briefTitle": "A Study of HER3-DXd in Solid Tumors"},
+        "conditionsModule": {"conditions": ["Advanced Solid Tumor"]},
+        "armsInterventionsModule": {},
+        "eligibilityModule": {
+            "eligibilityCriteria": "Inclusion criteria:\n\nA. Adults.\n\n"
+            "Exclusion criteria:\n\nA. Diagnosis of BRAF V600E mutation-positive cancer.\n"
+        },
+    }
+}
+
+
+def test_biomarker_tier_separates_selects_from_mentions():
+    from app.tools.clinical_trials import _biomarker_tier
+    assert _biomarker_tier(_SELECTING_STUDY, "BRAF V600E") == "selects"
+    assert _biomarker_tier(_MENTIONING_STUDY, "BRAF V600E") == "mentions"
+    assert _biomarker_tier(_SELECTING_STUDY, "") == ""
+
+
+def test_eligibility_mentions_labels_an_exclusion_as_an_exclusion():
+    # The real case: DETERMINE Arm 07 (NCT07440290) lists "BRAF V600E
+    # mutation-positive cancers" under Exclusion criteria, because
+    # dabrafenib+trametinib is already approved for them. Presenting that study
+    # as a match for a BRAF V600E melanoma patient is a false statement.
+    from app.tools.clinical_trials import _eligibility_mentions
+    criteria = _MENTIONING_STUDY["protocolSection"]["eligibilityModule"]["eligibilityCriteria"]
+    found = _eligibility_mentions(criteria, "BRAF V600E")
+    assert found and found[0].startswith("[EXCLUSION]")
+
+
+def test_eligibility_mentions_labels_an_inclusion_as_an_inclusion():
+    from app.tools.clinical_trials import _eligibility_mentions
+    criteria = (
+        "Inclusion criteria:\n\nA. Confirmed BRAF V600E mutation.\n\n"
+        "Exclusion criteria:\n\nA. Prior immunotherapy.\n"
+    )
+    found = _eligibility_mentions(criteria, "BRAF V600E")
+    assert found and found[0].startswith("[INCLUSION]")
+
+
+def test_eligibility_mentions_admits_when_it_cannot_tell():
+    # ~3% of records have no Exclusion header. Guessing INCLUSION there would be
+    # the optimistic error, which is the dangerous one.
+    from app.tools.clinical_trials import _eligibility_mentions
+    found = _eligibility_mentions("Must have a BRAF V600E mutation.", "BRAF V600E")
+    assert found and "position in criteria unknown" in found[0]
+
+
+def test_closed_sites_are_labelled_and_open_ones_come_first():
+    # A study whose overall status is RECRUITING routinely lists WITHDRAWN sites.
+    # Naming one without its status sends a patient to a closed door.
+    from app.tools.clinical_trials import _dedupe_locations
+    locations = [
+        {"city": "London", "state": "Ontario", "country": "Canada", "status": "WITHDRAWN"},
+        {"city": "Toronto", "state": "Ontario", "country": "Canada", "status": "RECRUITING"},
+    ]
+    labels, n_matched, n_open = _dedupe_locations(locations, prefer=["canada"])
+    assert n_open == 1
+    assert n_matched == 2
+    assert labels[0].startswith("Toronto"), "an open site must outrank a withdrawn one"
+    assert "withdrawn" in labels[1]
+    assert "(" not in labels[0], "an open site needs no annotation"
+
+
+def test_a_site_with_no_status_is_treated_as_open():
+    # Older records omit per-site status. Treating that as closed would wrongly
+    # warn that a real study has no door.
+    from app.tools.clinical_trials import _dedupe_locations
+    labels, _, n_open = _dedupe_locations([{"city": "Leeds", "country": "United Kingdom"}])
+    assert n_open == 1
+    assert labels == ["Leeds, United Kingdom"]
 # --------------------------------------------------------------------------- #
 # Safety screen
 # --------------------------------------------------------------------------- #

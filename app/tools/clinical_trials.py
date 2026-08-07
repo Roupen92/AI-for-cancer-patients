@@ -72,8 +72,22 @@ SCHEMA = {
             "other_terms": {
                 "type": "string",
                 "description": (
-                    "Optional extra search terms — a drug name, a biomarker, an "
-                    "intervention type (e.g., 'pembrolizumab', 'exercise', 'CAR-T')."
+                    "Optional extra search terms — a drug name or an intervention "
+                    "type (e.g., 'pembrolizumab', 'exercise', 'CAR-T'). For a "
+                    "molecular marker use `biomarker` instead, not this."
+                ),
+            },
+            "biomarker": {
+                "type": "string",
+                "description": (
+                    "Optional. A molecular alteration the patient has TOLD YOU they "
+                    "have, copied exactly as they wrote it ('BRAF V600E', 'KRAS "
+                    "G12C', 'EGFR exon 19 deletion', 'MSI-high', 'HER2-low'). "
+                    "NEVER infer one from the condition — do not deduce EGFR from "
+                    "'lung cancer' or BRCA from 'breast cancer'. Leave this empty "
+                    "if the patient did not state a marker. Searching this field "
+                    "looks inside trial eligibility criteria, which is where "
+                    "markers are usually written; a plain search misses them."
                 ),
             },
             "max_results": {
@@ -127,6 +141,122 @@ _AMBIGUOUS_PLACE_WORDS = {
 }
 
 
+# --------------------------------------------------------------------------- #
+# Biomarker search
+# --------------------------------------------------------------------------- #
+#
+# `query.term` searches the registry's `BasicSearch` area, which does NOT include
+# `EligibilityCriteria` — and that is where molecular alterations are almost
+# always written. Verified against the live API: a UK patient with BRAF V600E
+# melanoma got `totalCount: 0` through this tool, by either route:
+#
+#   query.cond="BRAF V600E melanoma" & query.locn="United Kingdom"  -> 0
+#   query.cond=melanoma & query.term="BRAF V600E" & query.locn=UK   -> 0
+#
+# Aiming the biomarker at AREA[EligibilityCriteria] finds real recruiting studies.
+# Same patient, any geography, open statuses: 4 the old way, 15 the new way.
+#
+# Two fields groups, because a match in each means a very different thing:
+#   HIGH  — the study is ABOUT this alteration (it is in the title/condition/arm)
+#   LOW   — the study's record merely MENTIONS it, which may well be an EXCLUSION
+#           ("must not have a BRAF V600E mutation") or one item in a list of other
+#           alterations. Never present a LOW match as "a trial for your marker".
+_BIOMARKER_HIGH_FIELDS = ("BriefTitle", "OfficialTitle", "Condition", "Keyword",
+                          "ArmGroupLabel", "InterventionName")
+_BIOMARKER_LOW_FIELDS = ("EligibilityCriteria", "BriefSummary", "DetailedDescription")
+
+
+def _essie_quote(term: str) -> str:
+    """Quote a term for an Essie AREA[] expression."""
+    return '"' + re.sub(r'["\\]', " ", term).strip() + '"'
+
+
+def _biomarker_query(biomarker: str) -> str:
+    """An Essie expression matching `biomarker` in any field that could carry it.
+
+    The outer parentheses are load-bearing. Essie binds AND tighter than OR, so an
+    unparenthesized OR-group followed by `AND AREA[LocationCountry]Canada` applies
+    the location to only the LAST branch — verified live: 114 results
+    unparenthesized vs 20 parenthesized, no error either way.
+    """
+    quoted = _essie_quote(biomarker)
+    clauses = [
+        f"AREA[{field}]{quoted}"
+        for field in _BIOMARKER_HIGH_FIELDS + _BIOMARKER_LOW_FIELDS
+    ]
+    return "(" + " OR ".join(clauses) + ")"
+
+
+def _biomarker_tier(study: dict, biomarker: str) -> str:
+    """Where the biomarker actually matched: "selects" | "mentions" | "".
+
+    Decided client-side from the record we already fetched, so one query serves
+    both tiers. `selects` means the alteration is in the study's own identity;
+    `mentions` means it appears somewhere in the prose and the sentence has to be
+    read before anything is claimed.
+    """
+    if not biomarker:
+        return ""
+    needle = biomarker.lower()
+    proto = study.get("protocolSection") or {}
+    ident = proto.get("identificationModule") or {}
+    arms = proto.get("armsInterventionsModule") or {}
+
+    high_parts = [ident.get("briefTitle") or "", ident.get("officialTitle") or ""]
+    high_parts += (proto.get("conditionsModule") or {}).get("conditions") or []
+    high_parts += (proto.get("conditionsModule") or {}).get("keywords") or []
+    for group in (arms.get("armGroups") or []):
+        if isinstance(group, dict):
+            high_parts.append(group.get("label") or "")
+    for iv in (arms.get("interventions") or []):
+        if isinstance(iv, dict):
+            high_parts.append(iv.get("name") or "")
+    if any(needle in str(p).lower() for p in high_parts):
+        return "selects"
+    return "mentions"
+
+
+# The registry renders eligibility as markdown with these headers in ~97% of
+# records. Splitting on the exclusion header is what lets us say whether the
+# patient's marker appeared as something the trial WANTS or something it RULES OUT
+# — the difference between a lead and a dead end.
+_EXCLUSION_HEADER = re.compile(r"^\s*[*#\-\s]*exclusion criteria\s*:?\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def _eligibility_mentions(criteria: str, biomarker: str, limit: int = 2) -> list[str]:
+    """Sentences from the eligibility criteria naming `biomarker`, each labelled
+    INCLUSION or EXCLUSION by position relative to the exclusion header."""
+    if not criteria or not biomarker:
+        return []
+
+    split = _EXCLUSION_HEADER.search(criteria)
+    boundary = split.start() if split else None
+    needle = biomarker.lower()
+
+    out: list[str] = []
+    for line in re.split(r"(?:\r?\n)+|(?<=[.;])\s+", criteria):
+        stripped = line.strip(" \t*-#")
+        if not stripped or needle not in stripped.lower():
+            continue
+        at = criteria.find(line)
+        if boundary is None:
+            tag = "position in criteria unknown"
+        else:
+            tag = "EXCLUSION" if at >= boundary else "INCLUSION"
+        if len(stripped) > 300:
+            stripped = stripped[:297] + "…"
+        out.append(f"[{tag}] {stripped}")
+        if len(out) >= limit:
+            break
+    return out
+
+
+# Per-site recruitment status. A study whose overall status is RECRUITING can list
+# hundreds of sites of which most are WITHDRAWN, NOT_YET_RECRUITING or COMPLETED —
+# so naming a site without its status sends a patient to a closed door.
+_SITE_OPEN = {"RECRUITING", "NOT_YET_RECRUITING", "AVAILABLE"}
+
+
 def _location_tokens(location: str) -> list[str]:
     """Match keys for deciding whether a trial site is where the patient is.
 
@@ -157,10 +287,14 @@ def _location_tokens(location: str) -> list[str]:
 
 def _dedupe_locations(
     locations: list[dict], limit: int = 4, *, prefer: list[str] | None = None
-) -> tuple[list[str], int]:
+) -> tuple[list[str], int, int]:
     """Collapse a study's site list into a few human-readable place strings.
 
-    Returns (labels, n_matching_prefer).
+    Returns (labels, n_matching_prefer, n_open_sites). Each label carries the
+    site's own recruitment status when that status is not open, because a study
+    listed as RECRUITING routinely has sites that are WITHDRAWN or not yet open,
+    and sending a patient to one of those is the failure this exists to prevent.
+    Open sites are hoisted above closed ones.
 
     Registry records often list 200+ sites, and they come back in the registry's
     own order — which for a big international study means the first four are
@@ -170,9 +304,12 @@ def _dedupe_locations(
     """
     prefer = prefer or []
     seen: set[str] = set()
-    matched: list[str] = []
-    others: list[str] = []
+    matched_open: list[str] = []
+    matched_shut: list[str] = []
+    others_open: list[str] = []
+    others_shut: list[str] = []
     n_matched = 0
+    n_open = 0
 
     for loc in locations or []:
         if not isinstance(loc, dict):
@@ -182,25 +319,42 @@ def _dedupe_locations(
             (loc.get("state") or "").strip(),
             (loc.get("country") or "").strip(),
         ]
-        label = ", ".join(p for p in parts if p)
-        if not label:
+        place = ", ".join(p for p in parts if p)
+        if not place:
             continue
-        is_match = bool(prefer) and any(tok in label.lower() for tok in prefer)
+
+        site_status = (loc.get("status") or "").strip().upper()
+        is_open = site_status in _SITE_OPEN or not site_status
+        if is_open:
+            n_open += 1
+        # Only annotate what the patient would get wrong by assuming: an open site
+        # needs no note, a closed one does.
+        label = place if is_open else f"{place} ({site_status.replace('_', ' ').lower()})"
+
+        is_match = bool(prefer) and any(tok in place.lower() for tok in prefer)
         if is_match:
             n_matched += 1
         if label in seen:
             continue
         seen.add(label)
-        if is_match:
-            if len(matched) < limit:
-                matched.append(label)
-        elif len(others) < limit:
-            others.append(label)
 
-    return (matched + others)[:limit], n_matched
+        bucket = (
+            (matched_open if is_open else matched_shut)
+            if is_match
+            else (others_open if is_open else others_shut)
+        )
+        if len(bucket) < limit:
+            bucket.append(label)
+
+    ordered = matched_open + matched_shut + others_open + others_shut
+    return ordered[:limit], n_matched, n_open
 
 
-def _extract(study: dict, prefer_tokens: list[str] | None = None) -> dict[str, Any]:
+def _extract(
+    study: dict,
+    prefer_tokens: list[str] | None = None,
+    biomarker: str = "",
+) -> dict[str, Any]:
     """Pull the fields we render out of a v2 study record, defensively."""
     proto = study.get("protocolSection") or {}
     ident = proto.get("identificationModule") or {}
@@ -240,9 +394,18 @@ def _extract(study: dict, prefer_tokens: list[str] | None = None) -> dict[str, A
     has_placebo = "PLACEBO" in arm_text.upper() or "placebo" in " ".join(interventions).lower()
 
     all_locations = contacts.get("locations") or []
-    site_labels, n_nearby = _dedupe_locations(all_locations, prefer=prefer_tokens)
+    site_labels, n_nearby, n_open_sites = _dedupe_locations(
+        all_locations, prefer=prefer_tokens
+    )
 
     return {
+        "biomarker_tier": _biomarker_tier(study, biomarker),
+        "biomarker_criteria": _eligibility_mentions(
+            elig.get("eligibilityCriteria") or "", biomarker
+        ),
+        "n_open_sites": n_open_sites,
+        "status_verified": ((status_mod.get("statusVerifiedDate")) or "").strip(),
+        "why_stopped": (status_mod.get("whyStopped") or "").strip(),
         "nct": nct,
         "title": brief or official or "(no title)",
         "official_title": official,
@@ -303,6 +466,7 @@ async def run(args: dict, ctx) -> str:
 
     location = (args.get("location") or "").strip()
     other_terms = (args.get("other_terms") or "").strip()
+    biomarker = (args.get("biomarker") or "").strip()
     try:
         count = max(1, min(int(args.get("max_results") or 8), 15))
     except (TypeError, ValueError):
@@ -310,7 +474,7 @@ async def run(args: dict, ctx) -> str:
 
     # The registry is deterministic: the same query returns the same studies.
     # Re-asking is always wasted time the patient is sitting through.
-    memo_key = f"{condition}|{location}|{other_terms}"
+    memo_key = f"{condition}|{location}|{other_terms}|{biomarker}"
     if getattr(ctx, "already_asked", None) and ctx.already_asked("clinical_trials_search", memo_key):
         return (
             f"You already searched the registry for '{condition}'"
@@ -331,10 +495,29 @@ async def run(args: dict, ctx) -> str:
     }
     if location:
         params["query.locn"] = location
+
+    # The biomarker goes into `query.term` as an Essie AREA[] expression so it can
+    # reach EligibilityCriteria; free-text extras keep their plain form. Both in
+    # one term, ANDed, with each side parenthesized (see _biomarker_query).
+    term_parts = []
+    if biomarker:
+        term_parts.append(_biomarker_query(biomarker))
     if other_terms:
-        params["query.term"] = other_terms
+        term_parts.append(f"({other_terms})" if biomarker else other_terms)
+    if term_parts:
+        params["query.term"] = " AND ".join(term_parts)
 
     data, err = await _fetch(params)
+
+    # An Essie syntax error must not silently become a plain-text search: that
+    # returns confident, wrong results (the old behaviour dropped the biomarker
+    # entirely on retry). Fall back to the biomarker as free text, which is at
+    # least honest about being a weaker match, and only then to no biomarker.
+    if data is None and err == "bad_request" and biomarker:
+        log.warning("Registry rejected the AREA[] biomarker query; falling back to free text.")
+        retry = dict(params)
+        retry["query.term"] = " ".join(p for p in (biomarker, other_terms) if p)
+        data, err = await _fetch(retry)
 
     # Some deployments reject `fields` or `sort`; retry with the minimum that is
     # guaranteed to be accepted rather than failing the whole turn.
@@ -373,6 +556,7 @@ async def run(args: dict, ctx) -> str:
     header = [
         f"Open clinical trials on ClinicalTrials.gov for: {condition}"
         + (f"  |  location filter: {location}" if location else "")
+        + (f"  |  biomarker: {biomarker}" if biomarker else "")
         + (f"  |  extra terms: {other_terms}" if other_terms else ""),
         f"Showing {len(studies)}"
         + (f" of {total} matching open studies." if isinstance(total, int) else " matching open studies.")
@@ -385,9 +569,43 @@ async def run(args: dict, ctx) -> str:
 
     lines: list[str] = []
     for study in studies:
-        s = _extract(study, prefer_tokens)
+        s = _extract(study, prefer_tokens, biomarker)
         if not s["nct"]:
             continue
+
+        # What the biomarker match actually licenses you to say. A "mentions"
+        # match is as likely to be an exclusion criterion, or one entry in a list
+        # of other alterations, as it is to be a trial for this patient.
+        if s["biomarker_tier"] == "selects":
+            marker_note = (
+                f"BIOMARKER: this study's own record is built around {biomarker} "
+                "(it is in the title, condition, or arm). Still not eligibility."
+            )
+        elif s["biomarker_tier"] == "mentions":
+            marker_note = (
+                f"BIOMARKER: {biomarker} appears only in this study's prose, NOT in "
+                "its title or arms. Read the criteria line below before you say "
+                "anything — it is often an EXCLUSION, or one item in a list of other "
+                "alterations. Do not describe this as a trial for their marker."
+            )
+        else:
+            marker_note = ""
+
+        # A study whose overall status is RECRUITING but which lists no open site
+        # has no door the patient can walk through. Say so rather than listing
+        # closed sites as though they were options.
+        if s["n_locations"] == 0:
+            sites_note = (
+                "NO SITES ARE LISTED YET for this study. Say that plainly — do not "
+                "leave the patient to assume there is somewhere to go."
+            )
+        elif s["n_open_sites"] == 0:
+            sites_note = (
+                f"WARNING: all {s['n_locations']} listed sites are closed, withdrawn, "
+                "or not yet open. The study reads as open but has no recruiting site."
+            )
+        else:
+            sites_note = ""
 
         # Say plainly whether any site is where the patient actually is. A study
         # with 117 sites and none of them in their country is a study they cannot
@@ -422,7 +640,13 @@ async def run(args: dict, ctx) -> str:
                     f"Planned enrollment: {s['enrollment']} participants" if s["enrollment"] else "",
                     f"Age range listed: {s['min_age'] or 'any'} to {s['max_age'] or 'any'}" if (s["min_age"] or s["max_age"]) else "",
                     f"Sites listed: {s['n_locations']}"
+                    + (f" ({s['n_open_sites']} recruiting or about to)" if s["n_locations"] else "")
                     + (f" — including {', '.join(s['locations'])}" if s["locations"] else ""),
+                    sites_note,
+                    marker_note,
+                    *(s["biomarker_criteria"] or []),
+                    f"Status last verified by the sponsor: {s['status_verified']}" if s["status_verified"] else "",
+                    f"Why it stopped: {s['why_stopped']}" if s["why_stopped"] else "",
                     nearby_note,
                     f"Started: {s['start_date']}" if s["start_date"] else "",
                     "",
@@ -451,9 +675,13 @@ async def run(args: dict, ctx) -> str:
             + (f"  Conditions: {', '.join(s['conditions'][:5])}\n" if s["conditions"] else "")
             + (
                 f"  Sites: {s['n_locations']} listed"
+                + (f", {s['n_open_sites']} recruiting or about to" if s["n_locations"] else "")
                 + (f" — e.g. {', '.join(s['locations'])}" if s["locations"] else "")
                 + "\n"
             )
+            + (f"  {sites_note}\n" if sites_note else "")
+            + (f"  {marker_note}\n" if marker_note else "")
+            + "".join(f"    {line}\n" for line in s["biomarker_criteria"])
             + (f"  {nearby_note}\n" if nearby_note else "")
             + ("  NOTE FOR THE PATIENT: this study includes a placebo (dummy treatment) comparison.\n" if s["has_placebo"] else "")
             + (
