@@ -110,6 +110,29 @@ _ACADEMIC_PATIENT_PAGES = [
     "dana-farber.org",
 ]
 
+# Genomics. THE FIRST SIX ENTRIES ARE LOAD-BEARING: the Brave fallback truncates
+# to 6 `site:` clauses, so those six have to be able to answer a gene-or-variant
+# question on their own. Deliberately NOT led by _GENERAL_PATIENT — cdc.gov,
+# who.int and nice.org.uk have almost nothing patient-facing on variant
+# interpretation, and putting them first would spend half the budget on domains
+# that return nothing for this agent's questions.
+_GENOMIC_PATIENT = [
+    "medlineplus.gov",            # MedlinePlus Genetics — plain-language gene and condition pages
+    "genome.gov",                 # NHGRI, incl. the Talking Glossary of Genomic Terms
+    "cancer.gov",                 # NCI patient pages on biomarker and tumour genomic testing
+    "cancer.net",                 # ASCO patient site — understanding biomarker test results
+    "nsgc.org",                   # National Society of Genetic Counselors — find a counsellor
+    "nhs.uk",                     # NHS Genomic Medicine Service, patient-facing
+    # Below here only the Perplexity path (post-filter, full list) ever sees them.
+    "rarediseases.info.nih.gov",  # GARD — inherited conditions
+    "clinicalgenome.org",         # ClinGen
+    "ncbi.nlm.nih.gov",           # ClinVar / MedGen — clinician register, cite sparingly
+    "acmg.net",
+    "genomicseducation.hee.nhs.uk",
+    "nih.gov",
+    "healthdirect.gov.au",
+]
+
 # Tier 2 — condition-specific patient organizations, grouped so a specialist can
 # take the whole set. Retrieval is query-driven, so carrying the full catalogue
 # costs nothing but lets any condition find its own charity.
@@ -201,6 +224,47 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "conditional": False,
         # The fallback when the router returns nothing usable.
         "default_agent": True,
+    },
+    "genomics": {
+        "display_name": "Genomics & Biomarkers",
+        "color": "#4F5D96",     # deep indigo — the one unoccupied hue band
+        "system_prompt": prompts.GENOMICS,
+        # `genomics_lookup` is the patient-language layer; the base tools cover the
+        # literature and patient-facing explanation pages. Deliberately NO
+        # clinical_trials_search: that would double-hit the registry (the memo is
+        # per-agent-run) and invite this agent into eligibility language. Deferring
+        # to the trials agent is the mechanism, per COMMON_PREFIX's "stay in your
+        # lane" rule.
+        "allowed_tools": PATIENT_BASE_TOOLS | {"genomics_lookup"},
+        # Broad on purpose: _apply_bias ORs the terms, so more terms widen rather
+        # than narrow, and the search retries unbiased when a bias starves the
+        # query. Spans oncology AND non-oncology genomics (pharmacogenomics,
+        # predisposition) because this app serves every condition.
+        "pubmed_bias": {
+            "mesh_terms": [
+                "Biomarkers, Tumor",
+                "Genetic Testing",
+                "Genetic Predisposition to Disease",
+                "Molecular Targeted Therapy",
+                "High-Throughput Nucleotide Sequencing",
+                "Microsatellite Instability",
+                "Pharmacogenomic Testing",
+                "Genetic Counseling",
+                "Mutation",
+            ]
+        },
+        "trusted_sources": _GENOMIC_PATIENT + _CONDITION_ORGS[:8] + _ACADEMIC_PATIENT_PAGES,
+        # HARD citation gate — no `soft_citation_gate` key. The soft gate exists for
+        # agents whose value is naming real programs and lived experience
+        # (navigator, stories, trials). Genomics is the inverse: its entire value is
+        # that a classification traces to a source, and an LLM's latent knowledge
+        # about BRCA and EGFR is fluent, abundant, and exactly what must not reach a
+        # patient uncited.
+        "citation_required": True,
+        "conditional": False,
+        # Gene reference pages are long; the default 1800-char cap truncates a
+        # MedlinePlus Genetics page mid-explanation.
+        "result_char_cap": 3000,
     },
     "physio": {
         "display_name": "Physiotherapist",
@@ -465,6 +529,7 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
 # off the same dict so adding an agent can't desync the synthesizer's outline.
 SECTION_HEADINGS: dict[str, str] = {
     "researcher": "What the evidence says",
+    "genomics":   "What your gene and biomarker test results mean",
     "physio":     "Movement, rehab, and physical function",
     "exercise":   "Getting active safely",
     "dietician":  "Eating and nutrition",
@@ -479,6 +544,10 @@ SECTION_HEADINGS: dict[str, str] = {
 # Evidence first (it frames everything), practical help and stories last.
 SECTION_ORDER: list[str] = [
     "researcher",
+    # Genomics sits second, immediately after the evidence: a molecular result
+    # frames everything below it, and it must precede `trials`, because the marker
+    # is what the trial list is selected on.
+    "genomics",
     "physio",
     "exercise",
     "dietician",

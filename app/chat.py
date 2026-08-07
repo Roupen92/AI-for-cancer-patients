@@ -19,7 +19,7 @@ import re
 import time
 from typing import Callable
 
-from app import board, language, llm, prompts, router, safety
+from app import board, genomics, language, llm, prompts, router, safety
 from app.config import SPECIALIST_CONFIGS, default_specialist_id
 from app.sessions import Conversation, Turn
 
@@ -273,6 +273,22 @@ async def run_turn(
     if early_flag.present:
         emit("red_flag", {"kind": early_flag.kind, "why": early_flag.why})
 
+    # Genomic screen, same shape as the red-flag screen: deterministic, before any
+    # model call, and its block is prepended in Python at step 5 so no LLM pass can
+    # reword or drop the germline-vs-somatic question. See app/genomics.py for why
+    # asking beats inferring.
+    report_signal = genomics.classify(message)
+    if report_signal.present:
+        emit(
+            "genomic_report",
+            {
+                "origin": report_signal.origin,
+                "markers_without_assay": report_signal.markers_without_assay,
+                # Which KINDS of identifier were spotted, never the values.
+                "identifiers": report_signal.identifiers,
+            },
+        )
+
     # 2. Triage.
     emit("phase", {"phase": "triaging"})
     _r0 = time.perf_counter()
@@ -351,8 +367,19 @@ async def run_turn(
         # catch a cue the translator chose to leave in English.
         translated_md = _prettify_markers(translated_md)
 
-    # 5. Prepend the emergency block LAST, after every LLM pass has run, so
-    #    nothing can reword, shorten, or bury it.
+    # 5. Prepend the deterministic blocks LAST, after every LLM pass has run, so
+    #    nothing can reword, shorten, or bury them. The emergency block goes
+    #    outermost: if someone is describing a stroke while asking about their
+    #    BRCA result, the stroke instruction is the first thing they must read.
+    #
+    #    The genomic block is skipped on the clarify path, where the whole answer
+    #    is one short question and a wall of preamble above it would bury it.
+    if report_signal.present and status != "clarify":
+        genomic_block = genomics.preamble(report_signal)
+        if genomic_block:
+            english_md = genomic_block + "\n" + english_md
+            translated_md = genomic_block + "\n" + translated_md
+
     if emergency_block:
         english_md = emergency_block + "\n" + english_md
         translated_md = emergency_block + "\n" + translated_md

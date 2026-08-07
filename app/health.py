@@ -55,7 +55,15 @@ def snapshot() -> dict:
             # patient-facing plain-language sources are what go dark.
             "any_configured": any(search.values()),
         },
-        "keyless_sources": ["pubmed", "europe_pmc", "semantic_scholar", "clinicaltrials_gov"],
+        "keyless_sources": [
+            "pubmed",
+            "europe_pmc",
+            "semantic_scholar",
+            "clinicaltrials_gov",
+            "nci_dictionary",
+            "medlineplus_genetics",
+            "civic",
+        ],
     }
 
 
@@ -119,10 +127,62 @@ async def _probe_brave() -> dict:
         return {"ok": False, "detail": f"{type(e).__name__}: {str(e)[:200]}"}
 
 
+async def _probe_genomic_sources() -> dict:
+    """Liveness for the three keyless genomics sources.
+
+    These need no key, so they cannot expire — but they can move, and the failure
+    mode is the one this module exists for: every genomics answer degrades to
+    "I couldn't find anything" with nothing saying why. Each check asserts
+    SEMANTICS, not just a 200, because all three return 200 with an empty body for
+    a query they don't understand.
+    """
+    import httpx
+
+    async def one(name: str, check) -> tuple[str, dict]:
+        try:
+            async with httpx.AsyncClient(timeout=PROBE_TIMEOUT) as client:
+                return name, await check(client)
+        except Exception as e:
+            return name, {"ok": False, "detail": f"{type(e).__name__}: {str(e)[:120]}"}
+
+    async def nci(client):
+        r = await client.get(f"{_NCI_GLOSSARY}/HealthCheck/status")
+        body = r.text.strip().strip('"')
+        return {"ok": r.status_code == 200 and "alive" in body.lower(), "detail": body[:60]}
+
+    async def medlineplus(client):
+        r = await client.get("https://medlineplus.gov/download/genetics/gene/braf.json")
+        symbol = (r.json() or {}).get("gene-symbol") if r.status_code == 200 else None
+        return {"ok": symbol == "BRAF", "detail": f"gene-symbol={symbol!r}"}
+
+    async def civic(client):
+        r = await client.post(
+            "https://civicdb.org/api/graphql",
+            json={"query": '{ variants(name:"V600E", first:1){ nodes{ id name } } }'},
+        )
+        nodes = (((r.json() or {}).get("data") or {}).get("variants") or {}).get("nodes") or []
+        return {"ok": bool(nodes), "detail": f"{len(nodes)} variant(s) for V600E"}
+
+    results = dict(
+        await asyncio.gather(
+            one("nci_dictionary", nci),
+            one("medlineplus_genetics", medlineplus),
+            one("civic", civic),
+        )
+    )
+    # The dictionary is the load-bearing one: it carries the patient-audience
+    # definitions. MedlinePlus and CIViC each cover only part of the ground.
+    results["ok"] = results["nci_dictionary"]["ok"]
+    return results
+
+
+_NCI_GLOSSARY = "https://webapis.cancer.gov/glossary/v1"
+
+
 async def probe() -> dict:
     """Live-check every backend. Costs a few tokens and two search queries."""
-    llm_res, pplx, brave = await asyncio.gather(
-        _probe_llm(), _probe_perplexity(), _probe_brave()
+    llm_res, pplx, brave, genomic = await asyncio.gather(
+        _probe_llm(), _probe_perplexity(), _probe_brave(), _probe_genomic_sources()
     )
     snap = snapshot()
     search_ok = pplx["ok"] or brave["ok"]
@@ -137,6 +197,9 @@ async def probe() -> dict:
             # specialist abstains and the patient sees "I couldn't find anything".
             "redundant": pplx["ok"] and brave["ok"],
         },
+        # Keyless, so not part of top-level `ok` — a genomics outage degrades one
+        # specialist rather than the app.
+        "genomic_sources": genomic,
         "keyless_sources": snap["keyless_sources"],
     }
 

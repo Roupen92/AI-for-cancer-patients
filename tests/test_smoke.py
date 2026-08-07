@@ -19,7 +19,7 @@ def test_imports():
 # --------------------------------------------------------------------------- #
 
 EXPECTED_RESEARCHERS = {
-    "researcher", "physio", "exercise", "dietician", "slp",
+    "researcher", "genomics", "physio", "exercise", "dietician", "slp",
     "mental", "trials", "navigator", "stories",
 }
 
@@ -64,8 +64,11 @@ def test_soft_citation_gates():
 
     for sid in ("navigator", "stories", "trials"):
         assert SPECIALIST_CONFIGS[sid].get("soft_citation_gate") is True, sid
-    # The clinical agents keep the hard gate: no citation, no answer.
-    for sid in ("researcher", "physio", "exercise", "dietician", "slp", "mental"):
+    # The clinical agents keep the hard gate: no citation, no answer. `genomics`
+    # belongs here and not above — a soft gate would let an uncited variant
+    # classification through, and an LLM's latent knowledge about BRCA and EGFR is
+    # fluent enough to be mistaken for retrieval.
+    for sid in ("researcher", "genomics", "physio", "exercise", "dietician", "slp", "mental"):
         assert not SPECIALIST_CONFIGS[sid].get("soft_citation_gate"), sid
 
 
@@ -104,6 +107,85 @@ def test_full_consult_roster_is_valid_and_excludes_overlap():
     # exercise overlaps physio, and trials is only right when asked for.
     assert "exercise" not in FULL_CONSULT_IDS
     assert "trials" not in FULL_CONSULT_IDS
+    # genomics must stay off the un-routed roster. That path runs with nobody
+    # having triaged the case, and an agent whose job is interpreting a report
+    # will, when no report exists, go looking for something to interpret — which
+    # is how "based on your BRCA status…" gets written for a patient who never
+    # mentioned BRCA.
+    assert "genomics" not in FULL_CONSULT_IDS
+
+
+def test_every_agent_has_frontend_visuals():
+    # shared.js's fallback hands an unknown agent generic initials and #4A7C6F —
+    # which is the Physiotherapist's exact sage — so a missing entry ships as a
+    # visual duplicate of another specialist with no error anywhere.
+    from pathlib import Path
+    from app.config import SPECIALIST_CONFIGS
+
+    shared = (Path(__file__).parent.parent / "static" / "shared.js").read_text()
+    for sid, cfg in SPECIALIST_CONFIGS.items():
+        assert f"{sid}:" in shared, f"shared.js has no AGENT_VISUALS entry for {sid}"
+        assert cfg["color"] in shared, f"shared.js color for {sid} drifted from config"
+
+
+def test_agent_colors_are_unique():
+    from app.config import SPECIALIST_CONFIGS
+
+    colors = [cfg["color"].upper() for cfg in SPECIALIST_CONFIGS.values()]
+    assert len(colors) == len(set(colors)), "two agents share a colour and are indistinguishable"
+
+
+def test_genomics_allowlist_leads_with_genomic_domains():
+    # Brave truncates to 6 site: clauses, so the first six have to be able to
+    # answer a gene-or-variant question on their own.
+    from app.config import SPECIALIST_CONFIGS
+
+    first_six = SPECIALIST_CONFIGS["genomics"]["trusted_sources"][:6]
+    assert "medlineplus.gov" in first_six      # MedlinePlus Genetics
+    assert "genome.gov" in first_six           # NHGRI glossary
+    assert "nsgc.org" in first_six             # how to reach a genetic counsellor
+    # These have essentially no patient-facing variant content; spending clauses
+    # on them is what the custom ordering exists to avoid.
+    assert "cdc.gov" not in first_six
+    assert "who.int" not in first_six
+
+
+def test_genomics_agent_has_its_lookup_tool_but_not_the_trial_registry():
+    from app.config import SPECIALIST_CONFIGS
+
+    tools = SPECIALIST_CONFIGS["genomics"]["allowed_tools"]
+    assert "genomics_lookup" in tools
+    # Giving it the registry would double-hit ClinicalTrials.gov (the memo is
+    # per-agent-run) and invite this agent into eligibility language. Deferring to
+    # the trials agent is the mechanism.
+    assert "clinical_trials_search" not in tools
+
+
+def test_genomics_prompt_refuses_to_interpret_the_patients_own_result():
+    from app import prompts
+
+    low = prompts.GENOMICS.lower()
+    # Ask, never infer — the central rule.
+    assert "never infer" in low or "may never infer" in low
+    assert "germline" in low and "somatic" in low
+    # The prognosis ban, mirroring the trials eligibility ban.
+    assert "never state or imply this patient's prognosis" in low
+    # The role must be introduced by what it does, not just named.
+    assert "genetic counsellor is a health professional" in low
+    # Exact-string preservation: the thing the patient has to say out loud.
+    assert "exactly as the patient wrote it" in low
+
+
+def test_institution_gloss_leaves_gene_symbols_alone():
+    # The gloss pass runs at high effort under an instruction to expand every
+    # acronym, and ALK / MET / RET / HFE are indistinguishable from institution
+    # acronyms by shape. Its only other guard is a length floor, which additions
+    # always clear — so this carve-out is the whole defence.
+    from app import prompts
+
+    assert "NOT INSTITUTIONS" in prompts.INSTITUTION_GLOSSARY
+    for gene in ("EGFR", "ALK", "MET", "RET", "HFE", "PD-L1"):
+        assert gene in prompts.INSTITUTION_GLOSSARY, f"{gene} is not carved out"
 
 
 def test_order_specialists_sorts_and_drops_unknowns():
@@ -229,7 +311,7 @@ def test_core_prompts_exist():
     from app import prompts
 
     for name in (
-        "COMMON_PREFIX", "CHAT_BREVITY", "RESEARCHER", "PHYSIO", "EXERCISE",
+        "COMMON_PREFIX", "CHAT_BREVITY", "RESEARCHER", "GENOMICS", "PHYSIO", "EXERCISE",
         "DIETICIAN", "SLP", "MENTAL_HEALTH", "SOCIAL_WORKER", "TRIALS", "STORIES",
         "TRANSLATOR", "SYNTHESIZER", "INSTITUTION_GLOSSARY", "PLAIN_LANGUAGE",
         "SELF_CHECK", "LAY_SUMMARY", "LOCATION_EXTRACTOR", "ROUTER",
@@ -246,7 +328,7 @@ def test_prompts_are_condition_agnostic():
     # every condition, and telling a diabetic to ask their oncologist is a bug.
     assert "oncology team" not in prompts.COMMON_PREFIX.lower()
     assert "WHAT TO ASK YOUR CARE TEAM" in prompts.COMMON_PREFIX
-    for name in ("RESEARCHER", "PHYSIO", "EXERCISE", "DIETICIAN", "SLP",
+    for name in ("RESEARCHER", "GENOMICS", "PHYSIO", "EXERCISE", "DIETICIAN", "SLP",
                  "MENTAL_HEALTH", "SOCIAL_WORKER", "TRIALS", "STORIES"):
         body = getattr(prompts, name)
         assert "oncology team" not in body.lower(), f"{name} still says 'oncology team'"
@@ -407,6 +489,168 @@ def test_a_site_with_no_status_is_treated_as_open():
     labels, _, n_open = _dedupe_locations([{"city": "Leeds", "country": "United Kingdom"}])
     assert n_open == 1
     assert labels == ["Leeds, United Kingdom"]
+
+
+# --------------------------------------------------------------------------- #
+# Genomic screen
+# --------------------------------------------------------------------------- #
+#
+# Deterministic, like app/safety.py, because the germline-vs-somatic question is
+# the one thing here that must not depend on a model remembering to ask it.
+
+@pytest.mark.parametrize("text, origin", [
+    # A bare gene plus a classification says nothing about which test it was —
+    # the same string appears on both kinds of report.
+    ("my report says BRCA2 pathogenic", "ambiguous"),
+    ("my tumour sequencing showed a KRAS G12C mutation", "somatic"),
+    ("I had a germline test and I'm a BRCA1 carrier", "germline"),
+    ("23andMe says I don't have the BRCA gene", "dtc"),
+    ("my blood test was germline negative but the tumour panel found TMB high", "mixed"),
+])
+def test_origin_is_classified_from_the_patients_own_words(text, origin):
+    from app import genomics
+    assert genomics.classify(text).origin == origin
+
+
+def test_a_consumer_test_outranks_the_germline_signal():
+    # A 23andMe report IS germline, but it is not clinical-grade germline, and
+    # treating the two the same is the specific harm: a negative consumer BRCA
+    # report read as reassurance leads someone to skip screening they need.
+    from app import genomics
+    sig = genomics.classify("My 23andMe raw data says I'm a carrier, inherited from my mother")
+    assert sig.origin == "dtc"
+
+
+def test_an_ambiguous_origin_forces_the_which_test_question():
+    from app import genomics
+    block = genomics.preamble(genomics.classify("my report says BRCA2 pathogenic"))
+    assert "which test was this" in block.lower()
+    assert "blood or saliva" in block.lower()
+    assert "tumour" in block.lower()
+
+
+def test_a_known_origin_does_not_ask_which_test_it_was():
+    # Asking a patient who already told you is not safety, it is not listening.
+    from app import genomics
+    block = genomics.preamble(genomics.classify("my tumour panel showed KRAS G12C"))
+    assert "which test was this" not in block.lower()
+
+
+def test_the_preamble_is_deterministic_and_names_the_counsellor_role():
+    from app import genomics
+    sig = genomics.classify("my report says BRCA2 pathogenic")
+    first = genomics.preamble(sig)
+    assert first == genomics.preamble(sig), "must be byte-identical between calls"
+    # Named by what they do — most patients have never heard of the role.
+    assert "genetic counsellor is a health professional" in first
+    assert "identifies you even with your name removed" in first
+
+
+def test_a_number_without_its_assay_gets_the_cannot_be_read_block():
+    from app import genomics
+    sig = genomics.classify("my TMB is 9, does that mean immunotherapy won't work for me")
+    assert "TMB" in sig.markers_without_assay
+    assert "a number on its own can't be read" in genomics.preamble(sig).lower()
+
+
+def test_a_number_with_its_assay_named_does_not():
+    from app import genomics
+    sig = genomics.classify("FoundationOne CDx reported my TMB as 9")
+    assert sig.markers_without_assay == []
+
+
+def test_report_header_identifiers_are_flagged_by_kind_only():
+    from app import genomics
+    sig = genomics.classify(
+        "Patient DOB 04/11/1962, MRN 88213, accession number: ABC12345 — BRAF V600E detected"
+    )
+    assert sig.identifiers
+    # The block names the KIND of identifier, never the value — this text is
+    # prepended to a patient-visible answer.
+    block = genomics.preamble(sig)
+    assert "88213" not in block and "1962" not in block
+
+
+def test_a_general_genetics_question_is_not_treated_as_a_report():
+    # "Is this genetic?" is a real question but not a result to interpret, and
+    # opening it with a block about which sample type was sequenced is noise.
+    from app import genomics
+    for text in ("is type 2 diabetes genetic?", "do genes cause high blood pressure"):
+        assert genomics.classify(text).present is False, text
+        assert genomics.preamble(genomics.classify(text)) == ""
+
+
+def test_the_screen_never_raises():
+    from app import genomics
+    for text in ("", None, "x" * 20000, "🧬", "c." * 500):
+        genomics.preamble(genomics.classify(text))
+
+
+# --------------------------------------------------------------------------- #
+# genomics_lookup
+# --------------------------------------------------------------------------- #
+
+def test_variant_notation_never_reaches_the_dictionary():
+    # Searching the NCI dictionary for `V600E` returns "BRAF (V600E) kinase
+    # inhibitor RO5185426" — vemurafenib. A naive lookup would tell a patient
+    # their mutation IS a drug.
+    from app.tools.genomics_lookup import _looks_like_a_variant
+
+    for variant in (
+        "V600E", "G12C", "T790M", "c.1799T>A", "p.Val600Glu", "exon 19 deletion",
+        # Observed in a live run: the agent asked for the gene-prefixed form as a
+        # dictionary term. It returns 0 hits for everything, so leaving it in place
+        # produced "no dictionary entry for BRAF V600E" — a miss that reads as an
+        # absence of knowledge rather than a misrouted query.
+        "BRAF V600E", "KRAS G12C", "EGFR exon 19 deletion", "EGFR T790M",
+    ):
+        assert _looks_like_a_variant(variant), variant
+    for term in (
+        "microsatellite instability", "tumor mutational burden", "pathogenic variant",
+        "variant of uncertain significance", "germline variant", "somatic variant",
+    ):
+        assert not _looks_like_a_variant(term), term
+
+
+def test_prognosis_is_stripped_from_variant_descriptions():
+    # CIViC curates prognostic evidence and it arrives in exactly the register the
+    # genomics prompt forbids. Removing it here means the agent cannot leak what it
+    # never received — enforcement over instruction.
+    from app.tools.genomics_lookup import _strip_prognosis
+
+    text = (
+        "BRAF V600E is recurrent in many cancer types. This variant is correlated "
+        "with poor prognosis in colorectal cancer. Dabrafenib has been effective in "
+        "clinical trials."
+    )
+    out = _strip_prognosis(text)
+    assert "poor prognosis" not in out
+    assert "Dabrafenib has been effective" in out
+    assert "recurrent in many cancer types" in out
+
+
+def test_genomics_lookup_is_registered_and_asks_for_what_the_patient_said():
+    from app.tools import all_tool_names, schemas_for
+
+    assert "genomics_lookup" in all_tool_names()
+    schema = schemas_for({"genomics_lookup"})[0]["function"]
+    props = schema["parameters"]["properties"]
+    assert {"terms", "genes", "variant"} <= set(props)
+    # The tool must not claim it can do the thing the whole agent is forbidden to do.
+    assert "cannot interpret this patient's result" in schema["description"]
+
+
+def test_genomics_lookup_refuses_an_empty_call():
+    import asyncio
+    from app.evidence import EvidenceLedger
+    from app.tools import ToolContext, genomics_lookup
+
+    ctx = ToolContext(specialist_id="genomics", pubmed_bias=None, ledger=EvidenceLedger())
+    out = asyncio.run(genomics_lookup.run({}, ctx))
+    assert "Error" in out
+    assert "do not invent" in out.lower()
+
+
 # --------------------------------------------------------------------------- #
 # Safety screen
 # --------------------------------------------------------------------------- #
@@ -1409,6 +1653,26 @@ def test_reference_urls_go_through_the_scheme_guard():
     for expr in raw_hrefs:
         assert expr in ("href", "ttHref"), f"anchor built from unguarded {expr!r}"
     assert raw_hrefs, "expected to find the reference/tooltip anchors"
+
+
+def test_genomics_prompt_separates_not_interpreting_from_not_answering():
+    # Observed live: the genomics agent abstained on a BRAF V600E + TMB question
+    # even though genomics_lookup had returned good definitions, and the mental
+    # agent ended up covering for it. The prohibitions are heavy enough that the
+    # agent read "must not interpret their result" as "cannot answer", leaving an
+    # empty section under a heading that promised to explain their results.
+    from app import prompts
+
+    low = prompts.GENOMICS.lower()
+    assert "explaining what the words and numbers mean is your answer" in low
+    assert "not in tier 3" in low
+    # The clarification has to arrive BEFORE the wall of prohibitions, not after
+    # it: when it sat at the end, the agent retrieved three good definitions and
+    # then wrote an uncited refusal, which the citation gate discarded.
+    assert "read this before the rules below" in low
+    assert low.index("you have an answer") < low.index("hard rules")
+    # And the draft must actually carry the labels, or the gate eats it.
+    assert "with its `[n]` label" in low
 
 
 # --------------------------------------------------------------------------- #

@@ -10,6 +10,7 @@
   // --- Agent visuals (must match backend SPECIALIST_CONFIGS) ----------------
   const AGENT_VISUALS = {
     researcher: { initials: "R", label: "Medical Research",     color: "#3F6C8F", verb: "reading the research and guidelines" },
+    genomics:   { initials: "G", label: "Genomics & Biomarkers", color: "#4F5D96", verb: "looking up your gene and marker results" },
     physio:     { initials: "P", label: "Physiotherapist",      color: "#4A7C6F", verb: "looking at movement and rehab" },
     exercise:   { initials: "A", label: "Exercise & Activity",  color: "#5C9E52", verb: "looking at safe activity" },
     dietician:  { initials: "D", label: "Dietitian",            color: "#8E9F4A", verb: "looking at food and nutrition" },

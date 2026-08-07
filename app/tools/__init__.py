@@ -20,6 +20,7 @@ from app.tools import (
     social_resource_search,
     patient_stories_search,
     clinical_trials,
+    genomics_lookup,
 )
 
 
@@ -55,6 +56,7 @@ _REGISTRY: dict[str, tuple[dict, Callable[[dict, ToolContext], Awaitable[str]]]]
     "social_resource_search":  (social_resource_search.SCHEMA,   social_resource_search.run),
     "patient_stories_search":  (patient_stories_search.SCHEMA,   patient_stories_search.run),
     "clinical_trials_search":  (clinical_trials.SCHEMA,          clinical_trials.run),
+    "genomics_lookup":         (genomics_lookup.SCHEMA,          genomics_lookup.run),
 }
 
 
