@@ -34,6 +34,65 @@ ABSTAIN_MARKER = re.compile(r"^\s*ABSTAIN\s*:", re.IGNORECASE | re.MULTILINE)
 
 MAX_TOOL_RESULT_CHARS_IN_HISTORY = 1800
 
+# Tool-call syntax that the model emitted as PROSE instead of as a real tool call.
+#
+# Observed live, on a long prompt: the model lost track of the tool-calling format
+# and produced ~14,000 characters of `<tool_call>patient_source_search`](query=…)`
+# interleaved with "I'm having formatting issues, let me try again" — all of it in
+# the message CONTENT, so it landed in draft_markdown and flowed through the
+# plain-language pass to the patient, who saw a wall of pseudo-XML.
+#
+# Nothing downstream could catch it: the citation and number checks in
+# board._plain_language see nothing wrong with garbage that preserves labels and
+# digits. So it is stripped here, before the citation gate, the synthesizer, and
+# the ledger — one place, every agent.
+#
+# Removal is LINE-WISE rather than surgical. Stripping just the angle brackets
+# leaves behind the tool name, the arguments and the apology as apparent prose,
+# which reads to a patient as gibberish rather than as markup. A whole line
+# carrying any of these markers is noise in its entirety, and no legitimate
+# patient-facing line contains one.
+_PARAMETER_BLOCK = re.compile(
+    r"<\s*parameter\b[^>]*>.*?<\s*/\s*parameter\s*>", re.IGNORECASE | re.DOTALL
+)
+_NOISE_MARKERS = (
+    "<tool_call", "</tool_call", "<function_calls", "</function_calls",
+    "<invoke", "</invoke", "<parameter", "</parameter",
+    "`](", "(attachment:", "(tool:",
+)
+# The self-narration that comes with it: a first-person line about struggling with
+# the tooling. Both halves are required — a "let me" line about anything else, or
+# the word "tool" in ordinary prose, is left alone.
+_APOLOGY_OPENER = re.compile(
+    r"^\s*(?:i\s*(?:'m|’m|\s+am)?\s*(?:apologize|sincerely apologize|keep|am|going to|"
+    r"struggling|seem|need|having|will)"
+    r"|let me\b|hmm,?\s*let me\b|i\b[^.\n]{0,30}\btry\b)",
+    re.IGNORECASE,
+)
+_APOLOGY_SUBJECT = re.compile(
+    r"\b(format|formatting|syntax|tool call|tool calls|the tool|tools|"
+    r"call the tool|technical difficult\w*)\b",
+    re.IGNORECASE,
+)
+
+
+def strip_tool_call_noise(text: str) -> str:
+    """Remove leaked tool-call markup and the model's apologies about it."""
+    if not text:
+        return ""
+    out = _PARAMETER_BLOCK.sub("", text)
+
+    kept = []
+    for line in out.splitlines():
+        low = line.lower()
+        if any(marker in low for marker in _NOISE_MARKERS):
+            continue
+        if _APOLOGY_OPENER.match(line) and _APOLOGY_SUBJECT.search(line):
+            continue
+        kept.append(line)
+
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+
 
 def _tool_call_dict(tc) -> dict:
     """Serialize a tool_call, preserving Gemini thought_signature via extra_content."""
@@ -245,7 +304,10 @@ async def finalize_draft(
     cfg = SPECIALIST_CONFIGS[spec_id]
     soft_gate = cfg.get("soft_citation_gate", False)
 
-    revised = await _self_check(draft, messages, emit)
+    # Strip leaked tool-call markup BEFORE the self-check, so the self-check reads
+    # the actual draft rather than spending its attention on the model's own
+    # formatting apologies — and again after, in case it reintroduces any.
+    revised = strip_tool_call_noise(await _self_check(strip_tool_call_noise(draft), messages, emit))
 
     if ABSTAIN_MARKER.search(revised.strip().splitlines()[0] if revised.strip() else ""):
         emit("no_evidence", {"reason": revised.strip()})

@@ -1411,3 +1411,55 @@ def test_reference_urls_go_through_the_scheme_guard():
     assert raw_hrefs, "expected to find the reference/tooltip anchors"
 
 
+# --------------------------------------------------------------------------- #
+# Leaked tool-call markup
+# --------------------------------------------------------------------------- #
+#
+# Observed live: on a long prompt the model lost the tool-calling format and
+# emitted ~14,000 characters of pseudo-XML tool calls plus "I'm having formatting
+# issues, let me try again" as message CONTENT. That landed in draft_markdown and
+# reached the patient. Nothing downstream could catch it — the citation and number
+# checks in board._plain_language see nothing wrong with garbage that preserves
+# labels and digits.
+
+_LEAKED = """## What a VUS means
+
+A variant of uncertain significance is a change whose effect is unknown [3].
+
+<tool_call>patient_source_search`](query="VUS reclassification", sources=["cancer.gov"])
+I'm having formatting issues with the tool. Let me try again.
+<tool_call>web_search`](query=site:cancer.gov variant uncertain significance)
+(Attachment: patient_source_search tool name has a backtick - let me fix)
+<parameter name="query">VUS family testing</parameter>
+
+Your care team can explain what yours means [4]."""
+
+
+def test_leaked_tool_call_markup_is_stripped_from_a_draft():
+    from app.specialist import strip_tool_call_noise
+
+    out = strip_tool_call_noise(_LEAKED)
+    for junk in ("<tool_call>", "<parameter", "`](query=", "(Attachment:", "formatting issues"):
+        assert junk not in out, junk
+    # The real content, and both citations, survive.
+    assert "variant of uncertain significance is a change whose effect is unknown [3]" in out
+    assert "Your care team can explain what yours means [4]." in out
+    assert out.startswith("## What a VUS means")
+
+
+def test_stripping_leaves_ordinary_prose_alone():
+    from app.specialist import strip_tool_call_noise
+
+    for clean in (
+        "Ask your care team to explain the result [2].",
+        # "Let me" and "tool" appear in real answers; both halves of the apology
+        # pattern have to match before a line is dropped.
+        "Let me be clear: this is not a diagnosis.",
+        "Ask your care team about the tool they use to grade it [2].",
+        # An earlier version of the marker list contained a bare "<", which ate
+        # any line with a less-than sign — including real eligibility criteria.
+        "Paediatric patients (1 to <16 years) were excluded [4].",
+        "Studies used a cut-off of 10 mutations per megabase [7].",
+        "",
+    ):
+        assert strip_tool_call_noise(clean) == clean.strip()
