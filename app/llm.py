@@ -12,7 +12,13 @@ import time
 import logging
 from typing import Any
 
-from openai import OpenAI, APIConnectionError, RateLimitError, APIStatusError
+from openai import (
+    OpenAI,
+    APIConnectionError,
+    APITimeoutError,
+    RateLimitError,
+    APIStatusError,
+)
 
 from app.config import MODEL_NAME, PROVIDER
 from app.logsafe import scrub
@@ -28,6 +34,27 @@ GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 _client: OpenAI | None = None
+
+# Per-request ceiling, and the reason it exists.
+#
+# Nothing here passed a timeout, so every call inherited the OpenAI SDK's default
+# 600s read timeout — and the SDK's own `max_retries=2` MULTIPLIES the retry loop
+# in chat() below, so one struggling provider could hold a single pass for
+# 600s x 3 x 5. Observed live: a turn sat in the plain-language pass for over
+# fifteen minutes with the browser showing a cheerful progress bar the whole time.
+# For a patient waiting on a health answer that is indistinguishable from a hang.
+#
+# 240s is comfortably above the slowest legitimate call observed (a 152s self-check
+# at high reasoning effort) and far below 600s. SDK retries are turned off because
+# chat() already retries with backoff and reports what it is doing; two retry
+# layers multiplying each other is how the worst case got to hours.
+_REQUEST_TIMEOUT = float(
+    os.getenv("CANCERPATIENT_LLM_TIMEOUT") or os.getenv("MEDBOARD_LLM_TIMEOUT") or 240.0
+)
+# Timeouts get their own, much smaller retry budget than connection errors — see
+# the handler in chat(). Worst case per call is now bounded at roughly
+# _REQUEST_TIMEOUT * _MAX_TIMEOUT_ATTEMPTS instead of being open-ended.
+_MAX_TIMEOUT_ATTEMPTS = 2
 
 
 def get_client() -> OpenAI:
@@ -46,7 +73,8 @@ def get_client() -> OpenAI:
                 "OPENROUTER_API_KEY is not set. Paste your key from "
                 "https://openrouter.ai/keys into .env and restart."
             )
-        _client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL)
+        _client = OpenAI(api_key=api_key, base_url=OPENROUTER_BASE_URL,
+                         timeout=_REQUEST_TIMEOUT, max_retries=0)
         log.info("LLM client: OpenRouter, model=%s", MODEL_NAME)
     elif provider == "openai":
         api_key = os.getenv("OPENAI_API_KEY")
@@ -55,7 +83,7 @@ def get_client() -> OpenAI:
                 "OPENAI_API_KEY is not set. Paste your key into .env and restart "
                 "(or unset CANCERPATIENT_PROVIDER to use Gemini)."
             )
-        _client = OpenAI(api_key=api_key)
+        _client = OpenAI(api_key=api_key, timeout=_REQUEST_TIMEOUT, max_retries=0)
         log.info("LLM client: OpenAI, model=%s", MODEL_NAME)
     else:
         api_key = os.getenv("GEMINI_API_KEY")
@@ -64,7 +92,8 @@ def get_client() -> OpenAI:
                 "GEMINI_API_KEY is not set. Paste your Google AI Studio key into .env "
                 "and restart (or set MEDBOARD_PROVIDER=openai to use OpenAI)."
             )
-        _client = OpenAI(api_key=api_key, base_url=GEMINI_BASE_URL)
+        _client = OpenAI(api_key=api_key, base_url=GEMINI_BASE_URL,
+                         timeout=_REQUEST_TIMEOUT, max_retries=0)
         log.info("LLM client: Gemini via OpenAI-compat endpoint, model=%s", MODEL_NAME)
 
     return _client
@@ -175,6 +204,7 @@ def chat(
         kwargs["reasoning_effort"] = effort
 
     attempt = 0
+    timeouts = 0
     while True:
         try:
             return client.chat.completions.create(**kwargs)
@@ -198,6 +228,24 @@ def chat(
                 f" (server suggested {suggested}s)" if suggested else "",
             )
             time.sleep(backoff)
+        except APITimeoutError:
+            # Retried far less than a connection error, and deliberately so. A
+            # timeout means the provider accepted the request and then took longer
+            # than _REQUEST_TIMEOUT to answer; a third four-minute wait helps
+            # nobody and the patient is watching a spinner the whole time. Two
+            # attempts, then let the caller degrade — every pass has a fallback
+            # (keep the un-simplified draft, keep the English, abstain honestly).
+            timeouts += 1
+            if timeouts >= _MAX_TIMEOUT_ATTEMPTS:
+                log.warning(
+                    "LLM timed out %d times at %.0fs; giving up so the turn can finish.",
+                    timeouts, _REQUEST_TIMEOUT,
+                )
+                raise
+            log.warning(
+                "LLM timed out after %.0fs (attempt %d/%d); retrying once.",
+                _REQUEST_TIMEOUT, timeouts, _MAX_TIMEOUT_ATTEMPTS,
+            )
         except APIConnectionError as e:
             attempt += 1
             if attempt >= max_retries:
