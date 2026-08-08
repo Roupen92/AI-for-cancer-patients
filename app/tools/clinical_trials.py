@@ -15,6 +15,8 @@ from typing import Any
 
 import httpx
 
+from app.logsafe import scrub_params
+
 log = logging.getLogger(__name__)
 
 _API = "https://clinicaltrials.gov/api/v2/studies"
@@ -442,7 +444,12 @@ async def _fetch(params: dict) -> tuple[dict | None, str]:
             if r.status_code == 429:
                 return None, "ClinicalTrials.gov rate-limited this request. Try again in a moment."
             if r.status_code != 200:
-                log.warning("ClinicalTrials.gov HTTP %s for %r", r.status_code, params)
+                log.warning(
+                    "ClinicalTrials.gov HTTP %s for %s",
+                    r.status_code,
+                    # condition + location in one line is a diagnosis and an address.
+                    scrub_params(params, safe_keys=("pageSize", "countTotal", "format")),
+                )
                 return None, (
                     f"clinical_trials_search failed: the registry returned "
                     f"{r.status_code}. Try a broader condition term."

@@ -3,6 +3,8 @@ import datetime
 import logging
 import httpx
 
+from app.logsafe import scrub
+
 log = logging.getLogger(__name__)
 
 _API = "https://www.ebi.ac.uk/europepmc/webservices/rest/search"
@@ -81,25 +83,25 @@ async def run(args: dict, ctx) -> str:
             if len(results) < 3 and min_year:
                 data = await _fetch(client, original, limit)
     except httpx.HTTPStatusError as e:
-        log.warning("Europe PMC HTTP %s for %r: %s", e.response.status_code, original[:80], e)
+        log.warning("Europe PMC HTTP %s for %r: %s", e.response.status_code, scrub(original), e)
         return (
             f"Europe PMC query failed: API returned {e.response.status_code}. "
             "Try a different query or another tool."
         )[:200]
     except httpx.RequestError as e:
-        log.warning("Europe PMC request error for %r: %s", original[:80], e)
+        log.warning("Europe PMC request error for %r: %s", scrub(original), e)
         return "Europe PMC query failed: network error or timeout. Try a different query or another tool."[:200]
     except httpx.HTTPError as e:
-        log.warning("Europe PMC HTTP error for %r: %s", original[:80], e)
+        log.warning("Europe PMC HTTP error for %r: %s", scrub(original), e)
         return "Europe PMC query failed: HTTP error. Try a different query or another tool."[:200]
     except ValueError as e:
-        log.warning("Europe PMC JSON decode error for %r: %s", original[:80], e)
+        log.warning("Europe PMC JSON decode error for %r: %s", scrub(original), e)
         return "Europe PMC query failed: malformed response. Try a different query or another tool."[:200]
 
     try:
         results = (data.get("resultList") or {}).get("result") or []
     except (KeyError, TypeError, AttributeError) as e:
-        log.warning("Europe PMC unexpected response shape for %r: %s", original[:80], e)
+        log.warning("Europe PMC unexpected response shape for %r: %s", scrub(original), e)
         return "Europe PMC query failed: unexpected response shape. Try a different query or another tool."[:200]
     if not results:
         return f"No Europe PMC results for: {original}"

@@ -1451,22 +1451,65 @@ def test_no_log_call_interpolates_patient_text():
     queries are built from the patient's own words — "metastatic pancreatic cancer
     diet Manchester" describes a person's health and where they live. This fails
     if anyone puts raw patient-derived text back into a log line.
+
+    The name allowlist this test used to carry was the bug: it matched `query[:80]`
+    but not `original[:80]`, so five raw Europe PMC query logs sat in the tree
+    passing a green test. It also never looked at whole collections, so the
+    ClinicalTrials.gov failure path logged its entire `params` dict — the patient's
+    condition and their location in one line. Both rules below are now shaped by
+    what leaks, not by what a variable happens to be called.
     """
     import re
     from pathlib import Path
 
+    # Any collection built from patient input. Logging one bare leaks its values.
+    RISKY_NAMES = r"params|flips|lost_\w+|src_numbers|variants|queries"
+    # ...except collections of bare reference labels. `lost_cites` is {1, 3, 7} —
+    # ordinal pointers into the source list, carrying nothing about the person.
+    # Redacting them would cost real debuggability for zero privacy gain.
+    SAFE_NAMES = ("lost_cites",)
+
     offenders = []
     for path in sorted((Path(__file__).parent.parent / "app").rglob("*.py")):
+        if path.name == "logsafe.py":
+            continue
         src = path.read_text()
         # Join wrapped log calls so multi-line ones are checked too.
         flat = re.sub(r"\n\s+", " ", src)
         for call in re.findall(r"log\.\w+\((?:[^()]|\([^()]*\))*\)", flat):
-            if "scrub(" in call:
+            if "scrub" in call:          # scrub / scrub_list / scrub_params
                 continue
-            # A raw slice of one of these names is patient-derived text.
-            if re.search(r"\b(query|raw_query|q|last_raw|case|message|text|draft|content)\[:\d+\]", call):
+            if any(n in call for n in SAFE_NAMES):
+                continue
+            # RULE 1: ANY truncating slice inside a log call. Whatever it is
+            # called, code only slices a string to make it fit a log line, and the
+            # strings this app holds are the patient's.
+            if re.search(r"\b\w+\[:\s*\d+\]", call):
+                offenders.append(f"{path.name}: {call[:110]}")
+            # RULE 2: a risky collection interpolated whole.
+            elif re.search(rf"[,(]\s*(sorted\(\s*)?({RISKY_NAMES})\b", call):
                 offenders.append(f"{path.name}: {call[:110]}")
     assert not offenders, "patient text in log calls:\n  " + "\n  ".join(offenders)
+
+
+def test_scrub_helpers_keep_the_count_and_drop_the_values():
+    """Guard warnings have to stay debuggable without becoming a health record.
+
+    "dropped 7 of 9 clinical numbers" is what tells you the plain-language pass is
+    flattening. The values are the patient's — a variant token IS their genetic
+    result once they have pasted a report in, and it implicates their relatives.
+    """
+    from app import logsafe
+
+    out = logsafe.scrub_list(["V600E", "c.1234delA", "BRCA2"])
+    assert "V600E" not in out and "BRCA2" not in out
+    assert "3" in out, "the count must survive or the log line is useless"
+
+    params = {"query.cond": "metastatic pancreatic cancer", "query.locn": "Manchester", "pageSize": 20}
+    safe = logsafe.scrub_params(params, safe_keys=("pageSize",))
+    assert "pancreatic" not in safe and "Manchester" not in safe
+    assert "20" in safe, "non-identifying params stay visible"
+    assert "query.cond" in safe, "key names stay so you can see WHICH query failed"
 
 
 def test_content_logging_is_opt_in_and_off_by_default():

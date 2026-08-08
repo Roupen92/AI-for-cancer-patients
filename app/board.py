@@ -204,7 +204,7 @@ def _synthesize_final(
         {"role": "user", "content": user_content},
     ]
     try:
-        resp = llm.chat(messages, tools=None)
+        resp = llm.chat(messages, tools=None, max_tokens=_rewrite_budget(user_content))
         return resp.choices[0].message.content or "(synthesis returned empty content)"
     except llm.QuotaExceeded as e:
         log.warning("Synthesizer hit LLM quota: %s", e)
@@ -231,6 +231,24 @@ _CITE_RE = re.compile(r"\[(\d{1,3})\]")
 # Numbers that carry clinical meaning. Citation labels are stripped before this
 # runs, so what's left is doses, durations, targets, and counts.
 _NUMBER_RE = re.compile(r"\d+(?:\.\d+)?")
+
+
+def _rewrite_budget(text: str) -> int:
+    """Output-token budget for a pass that rewrites a whole document.
+
+    `llm.chat` defaults to 4096 tokens, which is deliberately tight — that cap is
+    also the latency ceiling, and an over-generous budget is what let one runaway
+    generation burn 236.8s of a 285.8s turn. But synthesis, the institution gloss,
+    the plain-language pass and translation all emit output roughly as long as
+    their input, so a fixed 4096 would truncate a long consult summary mid-answer.
+
+    ~4 chars per token, doubled for headroom (translation into a
+    character-inefficient script inflates the count, and reasoning tokens are
+    charged against this same budget). Floored at the default so short answers are
+    never worse off, ceilinged so a pathological input still can't buy four
+    minutes of rope.
+    """
+    return max(4096, min(16384, len(text or "") // 2))
 
 
 def _citation_labels(md: str) -> set[str]:
@@ -371,7 +389,8 @@ def _gloss_institutions(english_md: str) -> str:
         # it is a single cheap pass whose entire job is exhaustive coverage, and at
         # low effort it intermittently misses one institution (e.g. an agency named
         # in full mid-sentence). High effort makes the guarantee reliable.
-        resp = llm.chat(messages, tools=None, reasoning_effort="high")
+        resp = llm.chat(messages, tools=None, reasoning_effort="high",
+                        max_tokens=_rewrite_budget(english_md))
         out = (resp.choices[0].message.content or "").strip()
         # The pass only ADDS institution descriptions, so the output should never
         # be shorter than the input. A much-shorter result means a refusal or a
@@ -412,7 +431,7 @@ def _plain_language(md: str) -> str:
         {"role": "user", "content": src},
     ]
     try:
-        resp = llm.chat(messages, tools=None)
+        resp = llm.chat(messages, tools=None, max_tokens=_rewrite_budget(src))
         out = (resp.choices[0].message.content or "").strip()
     except llm.QuotaExceeded as e:
         log.warning("Plain-language pass hit LLM quota: %s", e)
@@ -447,7 +466,7 @@ def _plain_language(md: str) -> str:
         if len(lost_numbers) > max(2, int(0.2 * len(src_numbers))):
             log.warning(
                 "Plain-language pass dropped clinical numbers %s (of %d); keeping original.",
-                sorted(lost_numbers)[:10], len(src_numbers),
+                logsafe.scrub_list(lost_numbers), len(src_numbers),
             )
             return md
 
@@ -456,17 +475,22 @@ def _plain_language(md: str) -> str:
     # of "V600E" that isn't "V600E".
     lost_variants = _variant_tokens(src) - _variant_tokens(out)
     if lost_variants:
+        # Variant tokens are the single most identifying thing in this app: when a
+        # patient has pasted their report, `V600E` or `c.1234delA` IS their genetic
+        # result, and it says something about their blood relatives too.
         log.warning(
             "Plain-language pass dropped variant notation %s; keeping original.",
-            sorted(lost_variants)[:10],
+            logsafe.scrub_list(lost_variants),
         )
         return md
 
     flips = _polarity_flips(src, out)
     if flips:
+        # A flip is a (marker, polarity) pair — "BRCA2 positive" is a result, not a
+        # diagnostic label. The count is what tells you the guard is firing.
         log.warning(
             "Plain-language pass INVERTED a finding (%s); keeping original.",
-            ", ".join(sorted(flips)[:10]),
+            logsafe.scrub_list(flips),
         )
         return md
 
@@ -490,7 +514,7 @@ def _translate(english_md: str, target_language: str) -> str:
         },
     ]
     try:
-        resp = llm.chat(messages, tools=None)
+        resp = llm.chat(messages, tools=None, max_tokens=_rewrite_budget(english_md))
         return resp.choices[0].message.content or english_md
     except llm.QuotaExceeded as e:
         log.warning("Translator hit LLM quota: %s", e)
