@@ -1615,15 +1615,6 @@ main {
   .work-bar::after { animation: none; width: 100%; opacity: 0.45; }
 }
 
-/* --- The `hidden` attribute must win ------------------------------------- */
-/* Any class rule that sets `display` (`.btn { display: inline-flex }`,
-   `.profile-body { display: flex }`, …) outranks the user-agent
-   `[hidden] { display: none }` rule, which silently reveals every element the
-   markup marked hidden — the collapsed About-me panel, the Stop button, the
-   per-message source lists. One normalize-style rule fixes the whole class of
-   bug for both pages. Kept last so nothing can override it. */
-[hidden] { display: none !important; }
-
 /* --- No horizontal scroll, ever ------------------------------------------ */
 /* A page that scrolls sideways on a phone hides the composer while you type. */
 html, body {
@@ -1766,3 +1757,633 @@ html, body {
 .cite-tooltip a {
   pointer-events: auto;
 }
+
+/* ========================================================================== */
+/* CARE-TEAM DASHBOARD                                                        */
+/* A left sidebar of named specialists plus a room for whichever one is open.  */
+/* Everything here uses LOGICAL properties (inline-start/end) so an RTL answer  */
+/* flips the chrome with it — see the RTL note above; a [dir="rtl"] selector    */
+/* can never match, because renderMarkdown writes the literal value "auto".     */
+/* ========================================================================== */
+
+:root {
+  /* Measured in app.js: the compliance banner is sticky and its height depends
+     on how its text wraps, so the sidebar's sticky offset can't be a guess. */
+  --banner-h: 46px;
+  --sidebar-w: 280px;
+}
+
+/* The overview has no composer, so it should not reserve room for one. */
+.body-chat { padding-bottom: 24px; }
+.body-chat.in-room { padding-bottom: 176px; }
+
+.app-shell {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* The dashboard is full-bleed, so the brand should sit above the sidebar rather
+   than floating in the middle of the page over a 720px content column. */
+.body-chat .topbar-inner {
+  max-width: none;
+  padding-inline: 20px;
+}
+
+/* --- Sidebar -------------------------------------------------------------- */
+
+.sidebar {
+  flex: 0 0 var(--sidebar-w);
+  width: var(--sidebar-w);
+  position: sticky;
+  inset-block-start: var(--banner-h);
+  height: calc(100vh - var(--banner-h));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  background: var(--bg-elev);
+  border-inline-end: 1px solid var(--border);
+  z-index: 30;
+}
+
+.sidebar-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 18px 14px 28px;
+}
+
+.sidebar-head { padding-inline: 6px; }
+
+.sidebar-title {
+  display: block;
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 1.08rem;
+  color: var(--text);
+  text-decoration: none;
+}
+
+.sidebar-title:hover { color: var(--primary); }
+
+.sidebar-sub {
+  margin-top: 4px;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  color: var(--text-faint);
+}
+
+.room-list,
+.room-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.room-rows {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.room-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 10px;
+  background: none;
+  border: 0;
+  border-inline-start: 3px solid transparent;
+  border-radius: var(--radius-sm);
+  font: inherit;
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+
+.room-row:hover { background: var(--bg-tint); }
+
+.room-row:focus-visible {
+  outline: 2px solid var(--room-color, var(--primary));
+  outline-offset: 1px;
+}
+
+/* The selection accent is the specialist's OWN colour, not one global accent —
+   the colour is how the room is recognised. */
+.room-row.is-active {
+  background: var(--room-tint, var(--primary-soft));
+  border-inline-start-color: var(--room-color, var(--primary));
+}
+
+.room-row.is-active .room-row-name { color: var(--room-color, var(--primary-strong)); }
+
+.room-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.room-row-name {
+  font-weight: 600;
+  font-size: 0.9rem;
+}
+
+.room-row-tag {
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+
+/* The front door is a different kind of thing from a named specialist. */
+.room-row-front {
+  border: 1px dashed var(--border-strong);
+  border-inline-start-width: 3px;
+  background: var(--bg-tint);
+}
+
+.sidebar-links {
+  margin-top: 2px;
+  padding-inline: 6px;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+
+.sidebar-links a { color: var(--text-muted); }
+
+/* The About-me panel is global across every room, so it lives in the sidebar. */
+.sidebar .profile-panel {
+  margin-top: 4px;
+  margin-bottom: 0;
+  border-radius: var(--radius-sm);
+}
+
+.sidebar .profile-toggle { padding: 11px 12px; }
+.sidebar .profile-toggle > span:first-child { font-size: 0.88rem; }
+.sidebar .profile-summary { font-size: 0.72rem; }
+.sidebar .profile-body { padding: 4px 12px 14px; gap: 12px; }
+.sidebar .profile-hint { font-size: 0.75rem; padding-top: 10px; }
+.sidebar .field-row { flex-direction: column; }
+.sidebar .field-row .field-narrow { flex: 1 1 auto; }
+.sidebar .field-label { font-size: 0.83rem; }
+.sidebar .field-help { font-size: 0.72rem; }
+.sidebar .field textarea,
+.sidebar .field input[type="text"] { font-size: 0.9rem; padding: 9px 11px; }
+
+/* --- Hamburger + drawer scrim (mobile only; sized here, shown below) ------ */
+
+.nav-toggle { display: none; }
+
+.nav-toggle-bars {
+  display: block;
+  width: 16px;
+  height: 2px;
+  background: currentColor;
+  box-shadow: 0 5px 0 currentColor, 0 -5px 0 currentColor;
+}
+
+/* --- Specialist dots ------------------------------------------------------ */
+
+.room-dot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.room-dot-front { background: var(--text-muted); }
+
+.room-dot-lg { width: 34px; height: 34px; font-size: 0.85rem; }
+
+.room-dot-xl {
+  width: 46px;
+  height: 46px;
+  border-radius: 14px;
+  font-family: var(--font-serif);
+  font-size: 1.1rem;
+}
+
+/* --- Main column ---------------------------------------------------------- */
+
+.room-main {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
+  margin: 0;
+  padding: 26px 28px 0;
+}
+
+.view-overview {
+  max-width: 1020px;
+  margin-inline: auto;
+  padding-bottom: 40px;
+}
+
+.overview-h1 {
+  font-family: var(--font-serif);
+  font-size: 2rem;
+  line-height: 1.2;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin-bottom: 12px;
+}
+
+.overview-sub {
+  max-width: 64ch;
+  color: var(--text-muted);
+  font-size: 1.02rem;
+  margin-bottom: 8px;
+}
+
+.overview-how {
+  color: var(--text-faint);
+  font-size: 0.9rem;
+  margin-bottom: 26px;
+}
+
+.overview-how a { color: var(--primary-strong); }
+
+.team-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(285px, 1fr));
+  gap: 14px;
+}
+
+.team-grid-empty {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+.team-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow: hidden;
+  padding: 20px 18px 16px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  font: inherit;
+  color: var(--text);
+  text-align: start;
+  cursor: pointer;
+  transition: border-color 0.14s ease, box-shadow 0.14s ease, transform 0.14s ease;
+}
+
+.team-card::before {
+  content: "";
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline: 0;
+  height: 3px;
+  background: var(--room-color, var(--primary));
+}
+
+.team-card:hover,
+.team-card:focus-visible {
+  border-color: var(--room-color, var(--primary));
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+  outline: none;
+}
+
+.team-card-head {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.team-card-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.team-card-name {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  font-size: 1.06rem;
+}
+
+.team-card-tag {
+  font-size: 0.82rem;
+  color: var(--text-muted);
+}
+
+.team-card-blurb {
+  font-size: 0.88rem;
+  line-height: 1.55;
+  color: var(--text-muted);
+}
+
+.team-card-go {
+  margin-top: auto;
+  padding-top: 2px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: var(--room-color, var(--primary));
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.chip {
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--room-tint, var(--bg-sunken));
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  line-height: 1.5;
+}
+
+/* --- Room ----------------------------------------------------------------- */
+
+.view-room {
+  max-width: var(--max-content);
+  margin-inline: auto;
+}
+
+.room-header {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 20px;
+  padding: 14px 18px 16px;
+  background: var(--room-tint, var(--bg-tint));
+  border: 1px solid var(--border);
+  border-inline-start: 4px solid var(--room-color, var(--primary));
+  border-radius: var(--radius-md);
+}
+
+.room-back {
+  align-self: flex-start;
+  padding: 0;
+  background: none;
+  border: 0;
+  font: inherit;
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.room-back:hover { color: var(--room-color, var(--primary)); }
+
+.room-header-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+
+.room-header-text { min-width: 0; }
+
+.room-title {
+  font-family: var(--font-serif);
+  font-size: 1.4rem;
+  font-weight: 600;
+  line-height: 1.2;
+}
+
+.room-tagline {
+  margin: 2px 0 9px;
+  color: var(--text-muted);
+  font-size: 0.92rem;
+}
+
+.room-starters { margin-bottom: 10px; }
+
+.room-starters-label {
+  margin-bottom: 10px;
+  font-size: 0.86rem;
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.room-starter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(235px, 1fr));
+  gap: 10px;
+}
+
+/* --- Referral: a warm handoff, or a quiet signpost ------------------------ */
+/* Two kinds, and the difference has to be visible at a glance.
+   `handoff`    — the room could not answer, so the referral IS the reply.
+   `suggestion` — the room answered well; another room can go further. It sits
+                  UNDER a real answer, so it must read as a footnote rather than
+                  as a correction of the good answer above it. */
+
+.referral-card { margin-top: 16px; }
+
+.referral-line {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+}
+
+.referral-reason { margin: 0; }
+
+.referral-card.is-handoff {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px 16px;
+  background: var(--room-tint, var(--primary-soft));
+  border: 1.5px solid var(--room-color, var(--primary));
+  border-radius: var(--radius-md);
+}
+
+.referral-card.is-handoff .referral-reason {
+  font-size: 0.98rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.referral-card.is-handoff .referral-btn {
+  background: var(--room-color, var(--primary));
+  border-color: var(--room-color, var(--primary));
+  color: #fff;
+}
+
+.referral-card.is-suggestion {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.referral-card.is-suggestion .referral-line {
+  flex: 1 1 240px;
+  align-items: center;
+}
+
+.referral-card.is-suggestion .referral-reason {
+  font-size: 0.84rem;
+  color: var(--text-faint);
+}
+
+.referral-card.is-suggestion .room-dot {
+  width: 20px;
+  height: 20px;
+  font-size: 0.62rem;
+}
+
+.referral-card.is-suggestion .referral-btn {
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 0.8rem;
+  color: var(--room-color, var(--primary-strong));
+  border-color: var(--border-strong);
+}
+
+.referral-card.is-suggestion .referral-btn:hover {
+  border-color: var(--room-color, var(--primary));
+  color: var(--room-color, var(--primary-strong));
+}
+
+/* --- Front-door attribution ---------------------------------------------- */
+
+.answered-by {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  background: var(--room-tint, var(--bg-tint));
+  border: 1px solid var(--border);
+  border-inline-start: 3px solid var(--room-color, var(--primary));
+  border-radius: var(--radius-sm);
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+.answered-by strong { color: var(--text); }
+
+.answered-by-btn {
+  margin-inline-start: auto;
+  min-height: 32px;
+  padding: 5px 12px;
+  font-size: 0.8rem;
+}
+
+/* --- Mobile: the sidebar becomes a drawer -------------------------------- */
+
+@media (max-width: 899px) {
+  .app-shell { display: block; }
+
+  .nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 9px;
+    min-height: 38px;
+    padding: 7px 12px;
+    background: var(--bg-tint);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-sm);
+    font: inherit;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text);
+    cursor: pointer;
+  }
+
+  .brand { font-size: 1.05rem; }
+
+  .sidebar {
+    position: fixed;
+    inset-block-start: var(--banner-h);
+    inset-block-end: 0;
+    /* Off-canvas via a logical inset rather than translateX, so the drawer
+       enters from the inline-start edge in either direction. */
+    inset-inline-start: -100%;
+    width: min(320px, 86vw);
+    height: auto;
+    z-index: 130;
+    visibility: hidden;
+    transition: inset-inline-start 0.22s ease, visibility 0s 0.22s;
+  }
+
+  .sidebar.is-open {
+    inset-inline-start: 0;
+    visibility: visible;
+    box-shadow: 0 8px 40px rgba(80, 60, 40, 0.28);
+    transition: inset-inline-start 0.22s ease;
+  }
+
+  .sidebar-scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 120;
+    background: rgba(42, 36, 29, 0.42);
+  }
+
+  body.drawer-open { overflow: hidden; }
+
+  .room-main { padding: 18px 16px 0; }
+  .composer-wrap { inset-inline-start: 0; }
+  .overview-h1 { font-size: 1.6rem; }
+  .team-grid { grid-template-columns: 1fr; }
+  .room-starter-grid { grid-template-columns: 1fr; }
+  .room-dot-xl { width: 38px; height: 38px; font-size: 0.95rem; }
+  .room-title { font-size: 1.2rem; }
+  .answered-by-btn { margin-inline-start: 0; }
+}
+
+@media (min-width: 900px) {
+  /* The composer is fixed to the viewport, so it has to step over the sidebar. */
+  .composer-wrap { inset-inline-start: var(--sidebar-w); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar { transition: none; }
+  .team-card { transition: none; }
+  .team-card:hover { transform: none; }
+}
+
+/* --- Dashboard print ------------------------------------------------------ */
+
+@media print {
+  .sidebar,
+  .sidebar-scrim,
+  .nav-toggle,
+  .view-overview,
+  .room-starters,
+  .room-back,
+  .referral-btn,
+  .answered-by-btn {
+    display: none !important;
+  }
+
+  .app-shell { display: block; }
+  .room-main { padding: 0; }
+
+  .room-header {
+    background: white;
+    border: 1px solid #999;
+  }
+}
+
+/* --- The `hidden` attribute must win ------------------------------------- */
+/* Any class rule that sets `display` (`.btn { display: inline-flex }`,
+   `.profile-body { display: flex }`, `.transcript { display: flex }`, …)
+   outranks the user-agent `[hidden] { display: none }` rule, which silently
+   reveals every element the markup marked hidden — the collapsed About-me panel,
+   the Stop button, the per-message source lists, and now every room that is not
+   the open one. One normalize-style rule fixes the whole class of bug for both
+   pages. MUST BE THE LAST RULE IN THIS FILE. */
+[hidden] { display: none !important; }

@@ -210,11 +210,53 @@ _PATIENT_STORY_DOMAINS: list[str] = [
 ]
 
 
+# --------------------------------------------------------------------------- #
+# Room metadata ("your care team" dashboard)
+#
+# Each researcher specialist is a ROOM the patient can walk into and chat with on
+# its own. The `room` block below is the card the patient sees before they commit
+# to a room, so the copy has to be honest about what that agent can actually do —
+# it is written from the agent's own system prompt in app/prompts.py, and nothing
+# in it may promise a capability the prompt forbids.
+#
+#   tagline  <= 60 chars, second person, no hype
+#   blurb    1-2 sentences: what this room is for (and, where it matters, what it
+#            deliberately is NOT — `trials` may never suggest we can tell someone
+#            whether they qualify; `genomics` explains terms, it does not
+#            interpret a patient's own result)
+#   covers   3-5 short topic chips
+#   examples 3 first-person starter questions a patient would really type
+#
+# A missing `room` ships as a broken dashboard card with no error anywhere, which
+# is why tests/test_smoke.py asserts every researcher has one — the same failure
+# mode as a missing SECTION_HEADINGS entry.
+# --------------------------------------------------------------------------- #
+
 SPECIALIST_CONFIGS: dict[str, dict] = {
     "researcher": {
         "display_name": "Medical Research",
         "color": "#3F6C8F",     # steel blue
         "system_prompt": prompts.RESEARCHER,
+        "room": {
+            "tagline": "What the research actually says",
+            "blurb": (
+                "Ask about a condition, a treatment, a procedure, or a word nobody has "
+                "explained yet. You get what the published guidelines and studies say, in "
+                "plain English, with a source behind every point."
+            ),
+            "covers": [
+                "What a condition is",
+                "Treatment options",
+                "What a test measures",
+                "How strong the evidence is",
+                "Questions worth asking",
+            ],
+            "examples": [
+                "What is stage 3 kidney disease, in plain English?",
+                "What do the studies actually show about statins for someone my age?",
+                "My letter says 'ejection fraction 35%' — what does that measure?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS,
         # No MeSH narrowing: this agent answers questions about any condition, so
         # a fixed bias would fight the query instead of focusing it.
@@ -229,6 +271,30 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Genomics & Biomarkers",
         "color": "#4F5D96",     # deep indigo — the one unoccupied hue band
         "system_prompt": prompts.GENOMICS,
+        # Deliberately "explains the words", never "reads your result". The prompt
+        # forbids inferring germline vs somatic, predicting benefit, or giving a
+        # threshold verdict, so the card must not imply any of them.
+        "room": {
+            "tagline": "Making sense of the words on your report",
+            "blurb": (
+                "Bring the terms and numbers from a genetic, genomic, or biomarker report "
+                "and have them explained in plain English. This room explains what they "
+                "mean in general — it does not read your own result or say what to do "
+                "about it, which is your care team's and a genetic counsellor's job."
+            ),
+            "covers": [
+                "Gene and variant names",
+                "What 'uncertain significance' means",
+                "Biomarker numbers",
+                "Germline vs tumour tests",
+                "Seeing a genetic counsellor",
+            ],
+            "examples": [
+                "My report says 'BRCA2 variant of uncertain significance' — what is that?",
+                "What is TMB, and what does the number actually measure?",
+                "What's the difference between a germline test and a tumour test?",
+            ],
+        },
         # `genomics_lookup` is the patient-language layer; the base tools cover the
         # literature and patient-facing explanation pages. Deliberately NO
         # clinical_trials_search: that would double-hit the registry (the memo is
@@ -270,6 +336,27 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Physiotherapist",
         "color": "#4A7C6F",     # sage
         "system_prompt": prompts.PHYSIO,
+        "room": {
+            "tagline": "Moving better, safely",
+            "blurb": (
+                "For pain, weakness, balance and getting back on your feet after surgery, a "
+                "stroke, or a long stretch of illness. Explains what rehab usually involves "
+                "and how to get referred; the actual programme comes from a physiotherapist "
+                "who can examine you."
+            ),
+            "covers": [
+                "Recovering after surgery",
+                "Balance and falls",
+                "Joint and back pain",
+                "Limb swelling",
+                "Cardiac and pulmonary rehab",
+            ],
+            "examples": [
+                "I've been in hospital three weeks and my legs feel useless. Where do I start?",
+                "What actually happens in cardiac rehab?",
+                "My knee hurts going down stairs — what usually helps?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS,
         "pubmed_bias": {
             "mesh_terms": [
@@ -303,6 +390,26 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Exercise & Activity",
         "color": "#5C9E52",     # fresh green
         "system_prompt": prompts.EXERCISE,
+        "room": {
+            "tagline": "Getting active again, at your pace",
+            "blurb": (
+                "For building fitness and strength when you're medically steady, and for how "
+                "activity affects your condition, your medicines and your blood sugar. "
+                "Covers where to start, how to build up, and the signs that mean stop."
+            ),
+            "covers": [
+                "Starting from almost nothing",
+                "How much and how often",
+                "Exercise and blood sugar",
+                "Pacing on low-energy days",
+                "When to stop and get help",
+            ],
+            "examples": [
+                "I'm out of breath walking to the shop. How do I build up from here?",
+                "Is it safe to lift weights with high blood pressure?",
+                "How does exercise change my blood sugar during the day?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS,
         "pubmed_bias": {
             "mesh_terms": [
@@ -333,6 +440,27 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Dietitian",
         "color": "#8E9F4A",     # warm olive
         "system_prompt": prompts.DIETICIAN,
+        "room": {
+            "tagline": "Food that works with your condition",
+            "blurb": (
+                "For eating with your condition and eating through treatment side effects — "
+                "salt, carbs, protein, appetite, taste changes, weight. Your personal "
+                "targets need a dietitian who has your blood results; this room explains "
+                "what the guidance says and what to ask for."
+            ),
+            "covers": [
+                "Salt, carbs and protein",
+                "Appetite and weight loss",
+                "Taste changes and sore mouth",
+                "Supplements and interactions",
+                "Practical meal ideas",
+            ],
+            "examples": [
+                "How much salt is too much with heart failure?",
+                "Nothing tastes right since chemo started — what can I actually eat?",
+                "Should I be watching potassium with kidney disease?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS,
         "pubmed_bias": {
             "mesh_terms": [
@@ -367,6 +495,26 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Speech & Swallowing",
         "color": "#5A8FA8",     # muted teal
         "system_prompt": prompts.SLP,
+        "room": {
+            "tagline": "Swallowing, voice, and finding words",
+            "blurb": (
+                "For coughing or choking on food and drink, food that sticks, a hoarse or "
+                "lost voice, and trouble speaking or finding words. Explains the warning "
+                "signs, what helps day to day, and how to get properly assessed."
+            ),
+            "covers": [
+                "Coughing when you eat or drink",
+                "Food getting stuck",
+                "A hoarse or quiet voice",
+                "Word-finding after a stroke",
+                "Getting a swallow assessment",
+            ],
+            "examples": [
+                "I keep coughing when I drink water. Should I be worried?",
+                "My voice has gone quiet since my Parkinson's diagnosis — what helps?",
+                "How do I get a swallowing assessment arranged?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS,
         "pubmed_bias": {
             "mesh_terms": [
@@ -402,6 +550,26 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Emotional Wellbeing",
         "color": "#7A6BAA",     # muted purple
         "system_prompt": prompts.MENTAL_HEALTH,
+        "room": {
+            "tagline": "The hard feelings that come with this",
+            "blurb": (
+                "For worry, low mood, sleep, scan anxiety and fear about what comes next — "
+                "your own, or the person you care for. Covers coping approaches that have "
+                "been studied and how to find a professional when you want one."
+            ),
+            "covers": [
+                "Worry and low mood",
+                "Sleep problems",
+                "Fear of it coming back",
+                "Talking to family",
+                "Finding a therapist",
+            ],
+            "examples": [
+                "I can't sleep the week before every scan. What helps?",
+                "Is it normal to feel this flat now that treatment has finished?",
+                "How do I tell my children what's going on?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS,
         "pubmed_bias": {
             "mesh_terms": [
@@ -435,6 +603,30 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Clinical Trials",
         "color": "#2C7A6B",     # deep teal
         "system_prompt": prompts.TRIALS,
+        # prompts.TRIALS forbids "you qualify" / "you're a good fit" / benefit
+        # prediction. The card carries the same rule: it may promise a LIST and an
+        # explanation, never a verdict on whether this patient can join.
+        "room": {
+            "tagline": "What trials exist, and what joining means",
+            "blurb": (
+                "Searches the public trial registry for studies in your condition and your "
+                "part of the world, and explains what each one is testing, what the phase "
+                "means, and what taking part involves. Whether anyone can join is decided "
+                "by the trial team after they check the records — never here."
+            ),
+            "covers": [
+                "Finding listed studies",
+                "What the phases mean",
+                "Where the sites are",
+                "What taking part involves",
+                "Questions for your specialist",
+            ],
+            "examples": [
+                "Are there any trials listed in the UK for my type of lung cancer?",
+                "What does a phase 2 trial actually involve week to week?",
+                "What should I ask my specialist about trials?",
+            ],
+        },
         "allowed_tools": {
             "clinical_trials_search",
             "patient_source_search",
@@ -463,6 +655,29 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Patient Navigator",
         "color": "#C97B3F",     # warm amber
         "system_prompt": prompts.SOCIAL_WORKER,
+        # "you would need to confirm eligibility", never "you qualify" — the same
+        # line the prompt draws.
+        "room": {
+            "tagline": "Money, work, transport, and paperwork",
+            "blurb": (
+                "For the practical side of being ill — help with costs, getting to "
+                "appointments, sick pay and work rights, benefits, home help and support "
+                "for carers. Each programme decides for itself who it can help; this room "
+                "finds them and explains how to apply."
+            ),
+            "covers": [
+                "Help with costs",
+                "Getting to appointments",
+                "Work and sick pay",
+                "Benefits and forms",
+                "Support for carers",
+            ],
+            "examples": [
+                "How do I get help paying for my medication?",
+                "What are my rights at work while I'm having treatment?",
+                "Is there any help with transport to dialysis?",
+            ],
+        },
         "allowed_tools": PATIENT_BASE_TOOLS | {"social_resource_search"},
         "pubmed_bias": None,
         "trusted_sources": (
@@ -500,6 +715,29 @@ SPECIALIST_CONFIGS: dict[str, dict] = {
         "display_name": "Stories from Others",
         "color": "#B05E6E",     # warm rose
         "system_prompt": prompts.STORIES,
+        # `stories` is a researcher, so it is offered by /api/team and needs a room
+        # like the rest. The prompt is explicit that this agent surfaces and labels
+        # lived experience and gives no advice — the card says the same.
+        "room": {
+            "tagline": "Hear from people who've been here",
+            "blurb": (
+                "Finds written accounts and podcast episodes from people living with the "
+                "same condition, from a curated set of patient-voice sources. These are "
+                "other people's experiences, not advice, and not a prediction about yours."
+            ),
+            "covers": [
+                "First-hand accounts",
+                "Podcast episodes",
+                "Newly diagnosed",
+                "Living with it long term",
+                "Carers' voices",
+            ],
+            "examples": [
+                "I'd like to hear from someone who had the same operation.",
+                "Are there stories from people living with MS for years?",
+                "What was starting dialysis like for other people?",
+            ],
+        },
         "allowed_tools": {"patient_stories_search", "patient_source_search"},
         "pubmed_bias": None,
         "trusted_sources": _PATIENT_STORY_DOMAINS,
@@ -582,6 +820,22 @@ def researcher_ids() -> list[str]:
         for sid, cfg in SPECIALIST_CONFIGS.items()
         if cfg.get("role") != "post_synthesis"
     ]
+
+
+def room_for(sid: str) -> dict:
+    """The dashboard card for one specialist, always with every key present.
+
+    Returns empty strings/lists rather than raising, so one missing `room` degrades
+    to a bare card instead of a 500 on /api/team. The test suite is what actually
+    stops a room going missing.
+    """
+    room = (SPECIALIST_CONFIGS.get(sid) or {}).get("room") or {}
+    return {
+        "tagline": str(room.get("tagline") or ""),
+        "blurb": str(room.get("blurb") or ""),
+        "covers": list(room.get("covers") or []),
+        "examples": list(room.get("examples") or []),
+    }
 
 
 def default_specialist_id() -> str:

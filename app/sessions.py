@@ -108,6 +108,11 @@ class Turn:
 class Conversation:
     cid: str
     profile: dict = field(default_factory=dict)
+    # Which specialist's ROOM this conversation belongs to, "" for the "not sure
+    # who to ask" front door. One conversation per room is what keeps each room's
+    # evidence ledger labels stable and its history that specialist's history —
+    # so app/server.py refuses a request that pins a different id against it.
+    specialist: str = ""
     # Oldest-first: {"role": "user"|"assistant", "content": str, "turn_id": str,
     #               "references": [labels], "created_at": float}
     messages: list[dict] = field(default_factory=list)
@@ -145,9 +150,9 @@ class Conversation:
 CONVERSATIONS: dict[str, Conversation] = {}
 
 
-def new_conversation(profile: dict | None = None) -> Conversation:
+def new_conversation(profile: dict | None = None, specialist: str = "") -> Conversation:
     cid = f"cv_{uuid.uuid4().hex[:12]}"
-    conv = Conversation(cid=cid, profile=dict(profile or {}))
+    conv = Conversation(cid=cid, profile=dict(profile or {}), specialist=specialist or "")
     CONVERSATIONS[cid] = conv
     return conv
 

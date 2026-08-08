@@ -27,9 +27,38 @@ from pydantic import BaseModel, Field
 
 load_dotenv()
 
-from app import board, chat, health, ratelimit, sessions, llm, prompts  # noqa: E402
+from app import board, chat, config, health, ratelimit, sessions, llm, prompts  # noqa: E402
 
 log = logging.getLogger("uvicorn.error")
+
+
+def _configure_app_logging() -> None:
+    """Give the `app.*` loggers a handler so their INFO records are actually seen.
+
+    Uvicorn configures only its own `uvicorn.*` loggers and leaves the root logger
+    alone, so every `logging.getLogger(__name__)` in this package had no handler
+    and fell through to Python's handler-of-last-resort — which emits WARNING and
+    above and silently drops INFO.
+
+    The casualty was `board.log_timing`, whose whole purpose is to answer "where
+    did those 90 seconds go" from `railway logs`. It had never once printed. A
+    diagnostic you cannot see is worse than none, because you think you have it.
+    """
+    level = (os.getenv("CANCERPATIENT_LOG_LEVEL") or "INFO").strip().upper()
+    app_log = logging.getLogger("app")
+    if not app_log.handlers:
+        handler = logging.StreamHandler()
+        handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s — %(message)s"))
+        app_log.addHandler(handler)
+    app_log.setLevel(level)
+    # Propagation stays ON. Turning it off stops records reaching the root logger,
+    # which is where pytest's caplog listens — importing this module then silently
+    # broke every log-assertion test in the suite, in whatever order they happened
+    # to run. Uvicorn adds no root handler, so nothing double-prints in production.
+    app_log.propagate = True
+
+
+_configure_app_logging()
 
 STATIC_DIR = Path(__file__).parent.parent / "static"
 
@@ -179,6 +208,11 @@ class ChatRequest(BaseModel):
     message: str = Field(..., min_length=2, max_length=6000)
     conversation_id: str | None = Field(default=None, max_length=64)
     profile: Profile | None = None
+    # Which specialist's room this message was typed in. None (or "") is the
+    # "not sure who to ask" front door, where the router picks the one best agent.
+    # Validated against config.researcher_ids() below — an unknown id is a client
+    # bug and gets a 400 rather than silently answering as somebody else.
+    specialist: str | None = Field(default=None, max_length=40)
 
 
 class ChatAccepted(BaseModel):
@@ -208,7 +242,7 @@ async def health_check(request: Request, probe: int = 0) -> dict:
 
 @app.get("/api/team")
 async def team() -> dict:
-    """The catalogue of specialists the router can call."""
+    """The care-team dashboard: every room, with the card copy the patient reads."""
     return {"specialists": chat.specialist_catalogue()}
 
 
@@ -221,6 +255,18 @@ async def post_message(req: ChatRequest, request: Request) -> ChatAccepted:
             detail="The service is busy right now. Please try again in a minute.",
         )
 
+    # Which room this message was sent from. "" / null / whitespace all mean the
+    # front door; anything else has to be a real researcher id.
+    pinned = (req.specialist or "").strip()
+    if pinned and pinned not in config.researcher_ids():
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown specialist '{pinned}'. Pick one of: "
+                f"{', '.join(config.researcher_ids())} — or omit the field to let us route it."
+            ),
+        )
+
     if req.conversation_id:
         conv = sessions.get_conversation(req.conversation_id)
         if conv is None:
@@ -230,10 +276,26 @@ async def post_message(req: ChatRequest, request: Request) -> ChatAccepted:
                 status_code=404,
                 detail="That conversation has expired. Start a new one and your question will still work.",
             )
+        # Each room is its own conversation, so its evidence ledger keeps stable
+        # [N] labels and its history is that specialist's history. Cross-wiring two
+        # rooms onto one conversation would silently merge both — refuse instead of
+        # letting a client bug corrupt the transcript.
+        if (conv.specialist or "") != pinned:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    f"That conversation belongs to '{conv.specialist or 'the front door'}', "
+                    f"not '{pinned or 'the front door'}'. Each room keeps its own conversation "
+                    "— start a new one for this room."
+                ),
+            )
         if req.profile is not None:
             conv.profile = req.profile.model_dump()
     else:
-        conv = sessions.new_conversation(req.profile.model_dump() if req.profile else {})
+        conv = sessions.new_conversation(
+            req.profile.model_dump() if req.profile else {},
+            specialist=pinned,
+        )
 
     if conv.active_turns() >= _MAX_TURNS_PER_CONVERSATION:
         raise HTTPException(
@@ -246,7 +308,9 @@ async def post_message(req: ChatRequest, request: Request) -> ChatAccepted:
 
     async def _runner() -> None:
         try:
-            turn.result = await chat.run_turn(conv, turn, req.message, emit)
+            turn.result = await chat.run_turn(
+                conv, turn, req.message, emit, pinned_specialist=pinned or None
+            )
         except asyncio.CancelledError:
             emit("error", {"message": "Cancelled."})
             raise

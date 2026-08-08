@@ -78,11 +78,16 @@
 
   function transformCitations(html, idPrefix) {
     // Replace [N] / [N, M] / [N-M] with citation chips linking to the source list.
+    // The prefix is stamped onto the chip as well as into its href: the chat gives
+    // each room its own prefix (`ref-physio-3`), so a [3] rendered in one room must
+    // resolve to that room's reference card and not to whatever `ref-3` happens to
+    // exist first in the document.
+    const prefix = escapeAttr(idPrefix);
     return html.replace(/\[(\d{1,3}(?:\s*[-–,;]\s*\d{1,3})*)\]/g, (match, group) =>
       expandCitationGroup(group)
         .map(
           (n) =>
-            `<a class="cite" href="#${idPrefix}${n}" data-cite-label="${n}" tabindex="0">[${n}]</a>`
+            `<a class="cite" href="#${prefix}${n}" data-cite-label="${n}" data-cite-prefix="${prefix}" tabindex="0">[${n}]</a>`
         )
         .join(" ")
     );
@@ -167,6 +172,11 @@
   let fetchLay = async () => "";         // (label) -> plain-English string
   let idPrefix = "ref-";
 
+  // `resolveRef(label, anchorEl)` and `fetchLay(label, ref)` — the second argument
+  // is what lets a page with more than one reference namespace (the chat, where
+  // every room has its own ledger) work out WHICH `[3]` was clicked. A page with a
+  // single namespace ignores it, so the consult's one-argument callbacks are
+  // unaffected.
   function configureCitations(opts) {
     if (opts.resolveRef) resolveRef = opts.resolveRef;
     if (opts.fetchLay) fetchLay = opts.fetchLay;
@@ -232,13 +242,23 @@
     tt.style.left = `${left}px`;
   }
 
+  // In-flight lay-summary fetches, keyed by scope + label. The chat now runs one
+  // conversation PER ROOM, so `[3]` in the dietitian's room and `[3]` in the
+  // trials room are different sources with different lay summaries — keying on
+  // the label alone would hand one room's summary to the other. A ref may carry
+  // `__scope` (set by the page when it files the ref away) to disambiguate;
+  // pages with a single ref namespace, like the consult, simply never set it.
   const _layInflight = new Map();
-  function fetchLayOnce(label) {
-    if (_layInflight.has(label)) return _layInflight.get(label);
-    const p = Promise.resolve(fetchLay(label))
+  function layKey(label, ref) {
+    return `${(ref && ref.__scope) || ""}|${label}`;
+  }
+  function fetchLayOnce(label, ref) {
+    const key = layKey(label, ref);
+    if (_layInflight.has(key)) return _layInflight.get(key);
+    const p = Promise.resolve(fetchLay(label, ref))
       .catch(() => "")
-      .finally(() => _layInflight.delete(label));
-    _layInflight.set(label, p);
+      .finally(() => _layInflight.delete(key));
+    _layInflight.set(key, p);
     return p;
   }
 
@@ -270,7 +290,7 @@
     positionTooltip(anchor, tt);
 
     if (!lay && ref.label != null) {
-      fetchLayOnce(String(ref.label)).then((text) => {
+      fetchLayOnce(String(ref.label), ref).then((text) => {
         if (!text) return;
         ref.lay_summary = text;
         if (!tt.hidden) {
@@ -280,7 +300,8 @@
             layEl.textContent = text;
           }
         }
-        const card = document.getElementById(`${idPrefix}${ref.label}`);
+        const cardPrefix = (anchor && anchor.dataset && anchor.dataset.citePrefix) || idPrefix;
+        const card = document.getElementById(`${cardPrefix}${ref.label}`);
         if (card && !card.querySelector(".ref-lay")) {
           const div = document.createElement("div");
           div.className = "ref-lay";
@@ -304,7 +325,7 @@
     const cite = e.target.closest && e.target.closest(".cite");
     if (!cite) return;
     cancelHide();
-    const ref = resolveRef(cite.dataset.citeLabel);
+    const ref = resolveRef(cite.dataset.citeLabel, cite);
     if (ref) showTooltip(cite, ref);
   });
   document.addEventListener("mouseout", (e) => {
@@ -321,7 +342,7 @@
   document.addEventListener("click", (e) => {
     const cite = e.target.closest && e.target.closest(".cite");
     if (cite) {
-      const ref = resolveRef(cite.dataset.citeLabel);
+      const ref = resolveRef(cite.dataset.citeLabel, cite);
       if (ref) {
         e.preventDefault();
         cancelHide();
@@ -341,7 +362,7 @@
   document.addEventListener("focusin", (e) => {
     if (!e.target.classList || !e.target.classList.contains("cite")) return;
     cancelHide();
-    const ref = resolveRef(e.target.dataset.citeLabel);
+    const ref = resolveRef(e.target.dataset.citeLabel, e.target);
     if (ref) showTooltip(e.target, ref);
   });
   document.addEventListener("focusout", (e) => {

@@ -41,35 +41,68 @@ curl <url>/api/health?probe=1                   # what actually works, not just 
 
 ## Architecture
 
-### The routing decision is the core of the system
+### One agent per turn — the patient picks the room
 
-`app/router.py` makes one cheap LLM JSON call per patient message and returns a mode plus a
-per-agent focus brief. Everything downstream follows from it:
+The chat is a **care-team dashboard**. The patient picks a specialist from the sidebar and talks
+to that agent alone; `POST /api/chat` carries `specialist: "<id>"`. `null` is the "not sure who to
+ask" front door, where the router picks the single best agent. Either way **exactly one specialist
+answers**. That is the cost model: no synthesis, no gloss, one research agent per message.
 
 ```
-patient message
+patient message  (+ the room it was typed in)
   ├─ app/safety.py         deterministic regex screen — runs BEFORE any LLM call
-  └─ app/router.py         mode + which specialists + focus for each
-       ├─ clarify → one question back, no research at all
-       ├─ reply   → 1 specialist              → plain-language pass
-       └─ team    → 2-4 in parallel → synthesis → institution gloss → plain-language pass
-                                                     └─ translation (if not English)
+  ├─ app/genomics.py       deterministic report screen — same, block prepended in Python
+  └─ app/router.py         route(..., force_single=True)
+       ├─ clarify → one question back, no research at all      (wins even inside a room)
+       └─ reply   → 1 specialist → plain-language pass → translation (if not English)
 ```
+
+**The router runs on every turn, pinned or not.** It is one cheap JSON call and four things depend
+on it even when the agent is already decided: the LLM red-flag screen that gets ORed with the regex
+screen, the per-agent focus brief, `clarify` mode, and the referral target. Don't "optimize" it away
+in a room.
+
+`force_single` downgrades `team` to `reply` **before** `_coerce_specialists` runs, so the truncation
+to one id happens in the router's order of preference. Ordering first would swap the model's first
+choice for whichever id sorts earliest in `SECTION_ORDER`.
+
+**A room refers, it never swaps.** Outside a room, a specialist that skips hands off silently to the
+generalist. Inside one that would be a lie — the patient thinks they're talking to the dietitian and
+someone else answers in their name. So `chat._run_reply(pinned=...)` turns a `skipped` into a
+`referral`: a Python-assembled message naming both rooms, plus a `referral` SSE event the UI renders
+as a "Ask the Clinical Trials specialist →" button. The target is the router's own top pick, already
+computed for this message before the pin overwrote it — free. `no_evidence` still retries the *same*
+agent once (only if it actually retrieved something), and never swaps.
+
+**One conversation per room.** `Conversation.specialist` records which room a conversation belongs
+to, and `/api/chat` returns **409** if a request pins a different id against it. Each room therefore
+keeps its own `EvidenceLedger`, so `[3]` is stable *within* a room and means nothing across rooms —
+the front end keeps a roomId → conversation_id map and per-room reference tables to match.
 
 `app/chat.py` orchestrates a turn; `app/board.py` owns the specialist round and every
-post-processing pass. `board.run_consult()` takes the roster as a parameter — the router supplies
-it. `board.run_board()` is the un-routed entry point (the `/api/board` endpoint and the eval
-harness) and uses the standing `config.FULL_CONSULT_IDS` roster instead.
+post-processing pass. The `team` branch in `run_turn` is retained but **unreachable from
+`/api/chat`**; `board.run_consult()` / `board.run_board()` still back `/api/board`, `/consult` and
+the eval harness on the standing `config.FULL_CONSULT_IDS` roster. Don't delete them.
+
+### Rooms are config too
+
+Each researcher specialist carries a `room` block in `SPECIALIST_CONFIGS` — `tagline`, `blurb`,
+`covers`, `examples` — served by `GET /api/team` and rendered as the sidebar row and the room card.
+A missing block ships as a blank dashboard card with no error anywhere, so a test asserts every
+researcher has one, exactly like `SECTION_HEADINGS`. The copy is written from each agent's own
+system prompt and may not promise what the prompt forbids: `trials` never implies we can say whether
+someone qualifies, `genomics` explains the words rather than reading the patient's own result.
 
 Everything the router returns is validated and clamped in `_coerce_specialists`. A router failure
 degrades to the generalist rather than breaking the turn — `route()` never raises.
 
 ### Specialists are config, not code
 
-`app/config.py: SPECIALIST_CONFIGS` is the catalogue (9 researchers + a post-synthesis translator).
-Adding an agent means adding an entry there, a prompt in `app/prompts.py`, and entries in
-`SECTION_HEADINGS` + `SECTION_ORDER`. A test enforces that last part, because a missing heading
-silently drops the agent's section from every summary.
+`app/config.py: SPECIALIST_CONFIGS` is the catalogue (10 researchers + a post-synthesis translator).
+Adding an agent means adding an entry there, a prompt in `app/prompts.py`, a `room` block (see
+"Rooms are config too" below), and entries in `SECTION_HEADINGS` + `SECTION_ORDER`. Tests enforce
+the last two, because a missing heading silently drops the agent's section from every summary and a
+missing room silently ships a blank dashboard card.
 
 `board._sections_block()` generates a `SECTIONS TO WRITE` contract from the agents that actually
 produced drafts, so the summary's shape follows the roster rather than a hardcoded outline. An

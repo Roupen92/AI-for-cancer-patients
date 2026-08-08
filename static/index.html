@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Patient Guide — plain-language answers from real medical sources</title>
-  <meta name="description" content="Ask about any condition. A team of AI helpers searches the same guidelines, research and trial registries doctors use, then explains what they found in plain language. Not medical advice." />
+  <title>Your care team — plain-language answers from real medical sources</title>
+  <meta name="description" content="A care team you can talk to about any condition. Each specialist searches the same guidelines, research and trial registries doctors use, then explains what they found in plain language. Not medical advice." />
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%234A7C6F'/%3E%3Cpath d='M9 16h4l2-5 3 10 2-5h3' stroke='white' stroke-width='2.2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
   <link rel="stylesheet" href="/static/styles.css" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -20,117 +20,130 @@
 
   <header class="topbar" role="banner">
     <div class="topbar-inner">
+      <button type="button" id="nav-toggle" class="nav-toggle" aria-expanded="false" aria-controls="sidebar">
+        <span class="nav-toggle-bars" aria-hidden="true"></span>
+        <span>Care team</span>
+      </button>
       <a href="/" class="brand">Patient Guide</a>
       <nav aria-label="Primary">
-        <a href="/" aria-current="page">Chat</a>
-        <a href="/consult">Full consult</a>
         <a href="/about">About</a>
         <a href="/privacy">Privacy</a>
       </nav>
     </div>
   </header>
 
-  <main id="main" class="chat-main">
+  <div class="app-shell">
+    <div id="sidebar-scrim" class="sidebar-scrim" hidden></div>
 
-    <!-- TRANSCRIPT -->
-    <section id="transcript" class="transcript" aria-live="polite" aria-label="Conversation">
-      <div class="intro" id="intro">
-        <h1 class="intro-h1">What can we help you understand?</h1>
-        <p class="intro-sub">
-          Ask about any condition, in your own words. We'll search the same places your
-          doctors do — clinical guidelines, published research, patient organizations and
-          the clinical trial registry — and explain what we find in plain language, with
-          links so you can check every claim.
-        </p>
-        <p class="intro-how">
-          Depending on what you ask, we bring in the helpers who are actually relevant —
-          sometimes one, sometimes a small team.
-        </p>
+    <!-- ------------------------------------------------------------------ -->
+    <!-- SIDEBAR: the care team. One row per room, plus the front door.       -->
+    <!-- ------------------------------------------------------------------ -->
+    <aside id="sidebar" class="sidebar" aria-label="Your care team">
+      <div class="sidebar-inner">
+        <div class="sidebar-head">
+          <a href="#/" class="sidebar-title" id="sidebar-title">Your care team</a>
+          <p class="sidebar-sub">Pick who you'd like to talk to. Each one keeps its own conversation.</p>
+        </div>
 
-        <div class="team-strip" id="team-strip" aria-label="The helpers we can call on"></div>
+        <nav class="room-list" aria-label="Specialists">
+          <button type="button" class="room-row room-row-front" data-room="__front__">
+            <span class="room-dot room-dot-front" aria-hidden="true">?</span>
+            <span class="room-row-text">
+              <span class="room-row-name">Not sure who to ask?</span>
+              <span class="room-row-tag">Ask here and we'll bring in the right one</span>
+            </span>
+          </button>
+          <div class="room-rows" id="room-rows"></div>
+        </nav>
 
-        <div class="starters" id="starters">
-          <p class="starters-label">Not sure where to start?</p>
-          <div class="starter-grid">
-            <button type="button" class="starter" data-fill="I was just diagnosed with type 2 diabetes and I don't really understand what it means. Where do I start?">
-              I was just diagnosed and I don't understand it
-            </button>
-            <button type="button" class="starter" data-fill="My doctor says I have heart failure and I should cut back on salt. How much salt is actually allowed, and what does that look like in real meals?">
-              How much salt can I actually have?
-            </button>
-            <button type="button" class="starter" data-fill="Are there any clinical trials I could ask my specialist about for my condition?">
-              Are there clinical trials I could ask about?
-            </button>
-            <button type="button" class="starter" data-fill="I'm struggling to afford my medication and getting to appointments is hard. What help exists where I live?">
-              I can't afford my medication
-            </button>
-            <button type="button" class="starter" data-fill="I keep coughing when I drink water and food feels like it gets stuck. What could be going on and who should I see?">
-              Food and drink keep going down wrong
-            </button>
-            <button type="button" class="starter" data-fill="I'd like to get more active but I'm scared of overdoing it with my condition. How do I start safely?">
-              I want to get active without overdoing it
-            </button>
+        <!-- ABOUT-ME PANEL — global across every room, so it lives here. -->
+        <section class="profile-panel" aria-labelledby="profile-heading">
+          <button type="button" id="profile-toggle" class="profile-toggle" aria-expanded="false" aria-controls="profile-body">
+            <span id="profile-heading">About me</span>
+            <span class="profile-summary" id="profile-summary">Optional — helps us give answers you can actually use</span>
+            <span class="profile-chevron" aria-hidden="true">▾</span>
+          </button>
+
+          <div id="profile-body" class="profile-body" hidden>
+            <p class="profile-hint">
+              Nothing here is required, and nothing is stored on our servers — it stays in this browser
+              and is sent with your question so the helpers can be specific instead of generic.
+            </p>
+
+            <label class="field" for="p-condition">
+              <span class="field-label">What condition are you dealing with?</span>
+              <span class="field-help">Anything you know — the diagnosis, the stage or severity, treatments you're on. Cancer, heart failure, diabetes, kidney disease, a new diagnosis nobody has explained yet.</span>
+              <input id="p-condition" type="text" maxlength="500" autocomplete="off" />
+            </label>
+
+            <div class="field-row">
+              <label class="field" for="p-location">
+                <span class="field-label">Where do you live?</span>
+                <span class="field-help">City, state/province, country. Needed to find programs and trials near you.</span>
+                <input id="p-location" type="text" maxlength="200" autocomplete="off" />
+              </label>
+
+              <label class="field" for="p-language">
+                <span class="field-label">Answer me in</span>
+                <span class="field-help">Any language — Spanish, Mandarin, Arabic, Armenian.</span>
+                <input id="p-language" type="text" maxlength="60" value="English" autocomplete="off" />
+              </label>
+
+              <label class="field field-narrow" for="p-age">
+                <span class="field-label">Age <span class="field-optional">(optional)</span></span>
+                <span class="field-help">Changes some advice.</span>
+                <input id="p-age" type="text" maxlength="20" autocomplete="off" />
+              </label>
+            </div>
+
+            <label class="field" for="p-preferences">
+              <span class="field-label">Eating or movement things we should know? <span class="field-optional">(optional)</span></span>
+              <span class="field-help">Vegetarian / vegan / halal / kosher, food allergies, exercise you enjoy or can't do, anything that limits movement (bad knee, wheelchair, low energy).</span>
+              <textarea id="p-preferences" rows="2" maxlength="600" autocomplete="off"></textarea>
+            </label>
+
+            <div class="profile-actions">
+              <button type="button" id="profile-save" class="btn btn-primary btn-small">Save</button>
+              <button type="button" id="profile-clear" class="btn btn-ghost btn-small">Clear everything</button>
+            </div>
           </div>
-        </div>
-      </div>
-    </section>
-    <!-- ABOUT-ME PANEL -->
-    <aside class="profile-panel" aria-labelledby="profile-heading">
-      <button type="button" id="profile-toggle" class="profile-toggle" aria-expanded="false" aria-controls="profile-body">
-        <span id="profile-heading">About me</span>
-        <span class="profile-summary" id="profile-summary">Optional — helps us give answers you can actually use</span>
-        <span class="profile-chevron" aria-hidden="true">▾</span>
-      </button>
+        </section>
 
-      <div id="profile-body" class="profile-body" hidden>
-        <p class="profile-hint">
-          Nothing here is required, and nothing is stored on our servers — it stays in this browser
-          and is sent with your question so the helpers can be specific instead of generic.
+        <p class="sidebar-links">
+          <a href="/about">About</a> · <a href="/privacy">Privacy</a>
         </p>
-
-        <label class="field" for="p-condition">
-          <span class="field-label">What condition are you dealing with?</span>
-          <span class="field-help">Anything you know — the diagnosis, the stage or severity, treatments you're on. Cancer, heart failure, diabetes, kidney disease, a new diagnosis nobody has explained yet.</span>
-          <input id="p-condition" type="text" maxlength="500" autocomplete="off" />
-        </label>
-
-        <div class="field-row">
-          <label class="field" for="p-location">
-            <span class="field-label">Where do you live?</span>
-            <span class="field-help">City, state/province, country. Needed to find programs and trials near you.</span>
-            <input id="p-location" type="text" maxlength="200" autocomplete="off" />
-          </label>
-
-          <label class="field" for="p-language">
-            <span class="field-label">Answer me in</span>
-            <span class="field-help">Any language — Spanish, Mandarin, Arabic, Armenian.</span>
-            <input id="p-language" type="text" maxlength="60" value="English" autocomplete="off" />
-          </label>
-
-          <label class="field field-narrow" for="p-age">
-            <span class="field-label">Age <span class="field-optional">(optional)</span></span>
-            <span class="field-help">Changes some advice.</span>
-            <input id="p-age" type="text" maxlength="20" autocomplete="off" />
-          </label>
-        </div>
-
-        <label class="field" for="p-preferences">
-          <span class="field-label">Eating or movement things we should know? <span class="field-optional">(optional)</span></span>
-          <span class="field-help">Vegetarian / vegan / halal / kosher, food allergies, exercise you enjoy or can't do, anything that limits movement (bad knee, wheelchair, low energy).</span>
-          <textarea id="p-preferences" rows="2" maxlength="600" autocomplete="off"></textarea>
-        </label>
-
-        <div class="profile-actions">
-          <button type="button" id="profile-save" class="btn btn-primary btn-small">Save</button>
-          <button type="button" id="profile-clear" class="btn btn-ghost btn-small">Clear everything</button>
-        </div>
       </div>
     </aside>
 
-  </main>
+    <!-- ------------------------------------------------------------------ -->
+    <!-- MAIN: overview (no room chosen) or one room.                        -->
+    <!-- ------------------------------------------------------------------ -->
+    <main id="main" class="room-main">
+
+      <section id="view-overview" class="view-overview" aria-labelledby="overview-h1">
+        <h1 class="overview-h1" id="overview-h1">Your care team, whenever you need them</h1>
+        <p class="overview-sub">
+          Each one searches the same places your doctors do — clinical guidelines, published
+          research, patient organizations, the trial registry — and explains what they find in
+          plain language, with a link behind every claim.
+        </p>
+        <p class="overview-how">
+          Pick whoever fits your question. If you're not sure, start with
+          <a href="#/ask">Not sure who to ask?</a> and we'll bring in the right one.
+        </p>
+        <div class="team-grid" id="team-grid"></div>
+      </section>
+
+      <section id="view-room" class="view-room" hidden>
+        <div class="room-header" id="room-header"></div>
+        <div id="room-panes"></div>
+      </section>
+
+    </main>
+  </div>
 
   <!-- COMPOSER -->
-  <div class="composer-wrap">
+  <div class="composer-wrap" id="composer-wrap" hidden>
     <form id="composer" class="composer">
       <label class="sr-only" for="message">Your question</label>
       <textarea id="message" name="message" rows="1" maxlength="6000"

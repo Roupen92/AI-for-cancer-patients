@@ -12,26 +12,33 @@ claim.
 
 **This is not medical advice.** Always talk to your care team before making any decisions.
 
-## How a turn works
+## Your care team
 
-Ask a question in plain words. A **router** reads it and spins up only the helpers that
-are actually relevant — usually one, sometimes a small team:
+You get a **team**, and you talk to them one at a time. The sidebar lists them by name —
+Physiotherapist, Dietitian, Speech & Swallowing, Genomics & Biomarkers, Clinical Trials,
+Patient Navigator, and more. Click one, and you're in that specialist's room: your history
+with them, their sources, their expertise. Not sure who you need? There's a front door that
+reads your question and opens the right room for you.
 
 ```
-patient message
+patient message  (+ the room it was typed in)
    ├─ safety screen (regex, no LLM)  → emergency / crisis block, prepended verbatim
-   └─ router (1 LLM call)            → mode + which specialists + a focus brief for each
+   └─ router (1 cheap LLM call)      → clarify? · focus brief · red-flag screen · referral target
         ├─ clarify → one short question back, no research
-        ├─ reply   → 1 specialist  → plain-language pass                      (~60-100s)
-        └─ team    → 2-4 in parallel → synthesis → institution gloss
-                                      → plain-language pass                   (~3-6 min)
+        └─ reply   → THE ONE specialist → plain-language pass                 (~60-100s)
                                                         └─ translation (if not English)
 ```
 
-A question about salt in heart failure spins one dietitian. "I was just diagnosed and I'm
-overwhelmed" spins four. The old behaviour — every agent on every question — is still
-available at `/consult` for people who want to write out their whole situation once and
-get a full printable summary.
+**One agent per question, always.** Asking the dietitian about salt spends one dietitian —
+not a committee. That is most of the cost, and most of the wait, gone.
+
+Ask the wrong specialist and nothing dead-ends: the room tells you so in its own voice and
+hands you a button through to the right one, with your question carried over. Each room keeps
+its own conversation and its own numbered sources, so `[3]` in the dietitian's room means the
+same thing in message ten as in message two — and nothing bleeds between rooms.
+
+The old everything-at-once behaviour still lives at `/consult` for anyone who wants to write
+out their whole situation once and get a full printable summary.
 
 ## The helpers
 

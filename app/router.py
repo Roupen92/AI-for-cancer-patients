@@ -111,6 +111,15 @@ def _coerce_specialists(raw, mode: str) -> tuple[list[str], dict[str, str]]:
     return ids, {k: v for k, v in focus.items() if k in ids}
 
 
+def generic_focus(message: str) -> str:
+    """The focus brief handed to a selected agent the model didn't brief.
+
+    Shared so the pinned-room path in app/chat.py hands its agent the same string
+    the router would have, instead of a near-copy that drifts.
+    """
+    return f"From your specialty, address the patient's question: {(message or '').strip()[:400]}"
+
+
 def _fallback(message: str, condition: str = "", degraded: bool = True) -> Route:
     sid = default_specialist_id()
     flag = safety.screen(message)
@@ -126,8 +135,20 @@ def _fallback(message: str, condition: str = "", degraded: bool = True) -> Route
     )
 
 
-def route(message: str, history: list[dict] | None = None, profile: dict | None = None) -> Route:
-    """Triage one patient message. Never raises — always returns a usable Route."""
+def route(
+    message: str,
+    history: list[dict] | None = None,
+    profile: dict | None = None,
+    force_single: bool = False,
+) -> Route:
+    """Triage one patient message. Never raises — always returns a usable Route.
+
+    `force_single=True` is the "your care team" dashboard's mode: one agent per
+    turn, always. It downgrades `team` to `reply` BEFORE `_coerce_specialists`
+    runs, so the truncation to one id happens in the ROUTER's order of preference.
+    Ordering first would swap the model's first choice for whichever id happens to
+    come earliest in SECTION_ORDER. `clarify` is untouched and can still win.
+    """
     msg = (message or "").strip()
     if not msg:
         return _fallback(msg, degraded=False)
@@ -163,6 +184,9 @@ def route(message: str, history: list[dict] | None = None, profile: dict | None 
     mode = str(parsed.get("mode") or "").strip().lower()
     if mode not in VALID_MODES:
         mode = "reply"
+    # Before _coerce_specialists, deliberately — see the docstring.
+    if force_single and mode == "team":
+        mode = "reply"
 
     specialists, focus = _coerce_specialists(parsed.get("specialists"), mode)
     clarifying = str(parsed.get("clarifying_question") or "").strip()
@@ -183,9 +207,7 @@ def route(message: str, history: list[dict] | None = None, profile: dict | None 
     # Every selected specialist gets a focus, even if the model omitted one.
     for sid in specialists:
         if not focus.get(sid):
-            focus[sid] = (
-                f"From your specialty, address the patient's question: {msg[:400]}"
-            )
+            focus[sid] = generic_focus(msg)
 
     llm_flag = parsed.get("red_flag") or {}
     llm_present = bool(llm_flag.get("present")) if isinstance(llm_flag, dict) else False
