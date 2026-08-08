@@ -44,12 +44,20 @@ _client: OpenAI | None = None
 # fifteen minutes with the browser showing a cheerful progress bar the whole time.
 # For a patient waiting on a health answer that is indistinguishable from a hang.
 #
-# 240s is comfortably above the slowest legitimate call observed (a 152s self-check
-# at high reasoning effort) and far below 600s. SDK retries are turned off because
-# chat() already retries with backoff and reports what it is doing; two retry
-# layers multiplying each other is how the worst case got to hours.
+# SDK retries are turned off because chat() already retries with backoff and
+# reports what it is doing; two retry layers multiplying each other is how the
+# worst case got to hours.
+#
+# Lowered 240s -> 120s once `max_tokens` was capped at 4096 (see below). Those two
+# numbers are a pair: the timeout only has to cover the slowest legitimate
+# generation, and at the slowest rate ever measured here (~69 tok/s) a full 4096
+# token response takes ~59s, so 120s is 2x headroom. At the old 16384 budget a
+# single call could legitimately run past 200s, which is why the ceiling had to be
+# 240s and why one stalled call could eat four minutes before anything noticed.
+# A retried call is almost always fast — the other calls in that same profiled
+# turn took 5s and 12s.
 _REQUEST_TIMEOUT = float(
-    os.getenv("CANCERPATIENT_LLM_TIMEOUT") or os.getenv("MEDBOARD_LLM_TIMEOUT") or 240.0
+    os.getenv("CANCERPATIENT_LLM_TIMEOUT") or os.getenv("MEDBOARD_LLM_TIMEOUT") or 120.0
 )
 # Timeouts get their own, much smaller retry budget than connection errors — see
 # the handler in chat(). Worst case per call is now bounded at roughly
@@ -133,6 +141,7 @@ def chat(
     response_format: dict | None = None,
     model: str | None = None,
     reasoning_effort: str | None = None,
+    max_tokens: int | None = None,
     max_retries: int = 5,
 ) -> Any:
     """Call the configured LLM with retry on transient errors.
@@ -155,11 +164,25 @@ def chat(
     # unset max_tokens counts as the model's FULL output budget (65k for GLM 5.2)
     # — which 402s unless the credit balance covers all of it. Cap it. The cap
     # includes reasoning tokens, so keep it comfortably above the effort level.
+    #
+    # The cap is ALSO the latency ceiling, which is why the default is no longer
+    # 16384. Measured: a normal call here emits 52-1001 output tokens at 52-186
+    # tok/s and returns in 1-6s — but one profiled turn had a single call run
+    # 236.8s, generating toward the old 16384 ceiling at a degraded rate, and
+    # that one call was 83% of a 285.8s turn. The same question answered in 23.8s
+    # on the next run. Tail latency, not a slow pipeline: the budget was 16x
+    # anything legitimately needed, so a runaway generation had four minutes of
+    # rope. 4096 keeps ~4x headroom over the largest observed real response and
+    # bounds the worst case to roughly a minute.
+    #
+    # Callers that rewrite a whole document (synthesis, gloss, plain-language,
+    # translation) legitimately need more and pass `max_tokens` explicitly.
     if PROVIDER == "openrouter":
         kwargs["max_tokens"] = int(
-            os.getenv("CANCERPATIENT_MAX_TOKENS")
+            max_tokens
+            or os.getenv("CANCERPATIENT_MAX_TOKENS")
             or os.getenv("MEDBOARD_MAX_TOKENS")
-            or 16384
+            or 4096
         )
 
         # Pin routing to providers that neither retain nor train on the request.
